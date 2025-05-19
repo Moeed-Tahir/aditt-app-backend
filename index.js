@@ -20,10 +20,8 @@ const PORT = process.env.PORT || 3000;
         });
 
         const authRoutes = require('./routes/v1/authRoute');
-        // const appRoutes = require('./routes/v1/appRoute');
 
         app.use('/api/auth', authRoutes);
-        // app.use('/api', appRoutes);
 
         app.use((err, req, res, next) => {
             console.error(err.stack);
