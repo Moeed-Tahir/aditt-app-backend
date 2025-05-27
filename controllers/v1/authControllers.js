@@ -189,12 +189,20 @@ const initiateIdentityVerification = async (req, res) => {
          success: true,
          message: 'Identity verification successful',
          nextStep: '/dashboard',
+         token,
          customer: {
             name: customer.name,
             phone: customer.phone,
-            stripeId: customer.id
+            stripeId: customer.id,
          },
-         token
+         user: {
+            id: user._id,
+            name: user.name,
+            phone: user.phone,
+            dateOfBirth: user.dateOfBirth,
+            gender: user.gender,
+            zipCode: user.zipCode
+         }
       });
 
    } catch (error) {
@@ -266,7 +274,7 @@ const signin = async (req, res) => {
 const verifySigninOtp = async (req, res) => {
    try {
       const { phone, otp } = req.body;
-      
+
       if (!phone || !otp) {
          return res.status(400).json({
             success: false,
