@@ -134,7 +134,7 @@ const savePersonalInfo = async (req, res) => {
 
 const initiateIdentityVerification = async (req, res) => {
    try {
-      const { phone } = req.body;
+      let { phone } = req.body;
 
       if (!phone) {
          return res.status(400).json({
@@ -142,6 +142,7 @@ const initiateIdentityVerification = async (req, res) => {
             message: 'Phone number is required'
          });
       }
+
 
       const user = await User.findOne({ phone, isOtpVerified: true });
 
@@ -152,12 +153,13 @@ const initiateIdentityVerification = async (req, res) => {
          });
       }
 
+      phone = phone.replace(/^\+/, '');
+
       const customers = await stripe.customers.search({
-         query: `phone:\'${phone}\'`,
+         query: `phone:'${phone}'`,
          limit: 1
       });
 
-      console.log("customers",customers);
 
       if (customers.data.length === 0) {
          return res.status(404).json({
@@ -167,6 +169,7 @@ const initiateIdentityVerification = async (req, res) => {
       }
 
       const customer = customers.data[0];
+
       if (!customer.name) {
          return res.status(400).json({
             success: false,
@@ -174,6 +177,7 @@ const initiateIdentityVerification = async (req, res) => {
          });
       }
 
+      // Update user
       user.isVerified = true;
       user.stripeCustomerId = customer.id;
       await user.save();
@@ -203,6 +207,7 @@ const initiateIdentityVerification = async (req, res) => {
       });
    }
 };
+
 
 
 const signin = async (req, res) => {
@@ -261,7 +266,7 @@ const signin = async (req, res) => {
 const verifySigninOtp = async (req, res) => {
    try {
       const { phone, otp } = req.body;
-
+      
       if (!phone || !otp) {
          return res.status(400).json({
             success: false,
@@ -285,10 +290,10 @@ const verifySigninOtp = async (req, res) => {
          });
       }
 
-      user.isOtpVerified = true;
-      user.otp = undefined;
-      user.otpExpires = undefined;
 
+      user.isOtpVerified = true;
+      user.otp = "Not Present";
+      user.otpExpires = null;
       await user.save();
 
       const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY, {
