@@ -1,5 +1,5 @@
 const sendOtp = require("../../services/otpService");
-const User = require('../../models/User.model');
+const User = require('../../models/ConsumerUser.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const jwt = require("jsonwebtoken");
 
@@ -177,7 +177,6 @@ const initiateIdentityVerification = async (req, res) => {
          });
       }
 
-      // Update user
       user.isVerified = true;
       user.stripeCustomerId = customer.id;
       await user.save();
@@ -229,6 +228,7 @@ const signin = async (req, res) => {
             message: 'User not found'
          });
       }
+
 
       if (!user.isVerified) {
          return res.status(400).json({
