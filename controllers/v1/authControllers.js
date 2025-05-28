@@ -132,24 +132,21 @@ const savePersonalInfo = async (req, res) => {
    }
 };
 
+
 const initiateIdentityVerification = async (req, res) => {
    try {
       let { phone } = req.body;
 
       if (!phone) {
-         return res.status(400).json({
-            success: false,
-            message: 'Phone number is required'
-         });
+         return res.status(400).json({ success: false, message: 'Phone number is required' });
       }
-
 
       const user = await User.findOne({ phone, isOtpVerified: true });
 
       if (!user) {
          return res.status(403).json({
             success: false,
-            message: 'Please complete previous steps first (OTP verification)'
+            message: 'Please complete OTP verification first'
          });
       }
 
@@ -160,7 +157,6 @@ const initiateIdentityVerification = async (req, res) => {
          limit: 1
       });
 
-
       if (customers.data.length === 0) {
          return res.status(404).json({
             success: false,
@@ -170,52 +166,87 @@ const initiateIdentityVerification = async (req, res) => {
 
       const customer = customers.data[0];
 
-      if (!customer.name) {
-         return res.status(400).json({
-            success: false,
-            message: 'Stripe customer is missing required information (name)'
-         });
-      }
+const session = await stripe.identity.verificationSessions.create({
+  type: 'document',
+  metadata: {
+    userId: user._id.toString()
+  },
+  return_url: 'http://localhost:3000/api/auth/stripe/webhook',
+  options: {
+    document: {
+      require_id_number: false,
+      allowed_types: ['driving_license', 'passport', 'id_card'], // ✅ Corrected here
+    }
+  }
+});
 
-      user.isVerified = true;
-      user.stripeCustomerId = customer.id;
-      await user.save();
 
-      const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY, {
-         expiresIn: '7d'
-      });
 
       res.status(200).json({
          success: true,
-         message: 'Identity verification successful',
-         nextStep: '/dashboard',
-         token,
-         customer: {
-            name: customer.name,
-            phone: customer.phone,
-            stripeId: customer.id,
-         },
-         user: {
-            id: user._id,
-            name: user.name,
-            phone: user.phone,
-            dateOfBirth: user.dateOfBirth,
-            gender: user.gender,
-            zipCode: user.zipCode
-         }
+         message: 'Stripe identity verification session created',
+         verificationUrl: session.url
       });
 
    } catch (error) {
       console.error('Identity verification error:', error);
       res.status(500).json({
          success: false,
-         message: 'Error during identity verification',
+         message: 'Server error during identity verification',
          error: error.message
       });
    }
 };
 
+const stripeWebhookHandler = async (req, res) => {
+   const sig = req.headers['stripe-signature'];
+   let event;
 
+   try {
+      event = stripe.webhooks.constructEvent(
+         req.body,
+         sig,
+         process.env.STRIPE_WEBHOOK_SECRET
+      );
+   } catch (err) {
+      console.error('Webhook signature verification failed:', err.message);
+      return res.status(400).json({
+         success: false,
+         message: `Webhook Error: ${err.message}`
+      });
+   }
+
+   if (event.type === 'identity.verification_session.verified') {
+      const session = event.data.object;
+      const userId = session.metadata.userId;
+
+      if (!userId) {
+         console.error('No user ID in verification session metadata');
+         return res.status(400).json({
+            success: false,
+            message: 'No user ID in verification session metadata'
+         });
+      }
+
+      try {
+         await User.findByIdAndUpdate(userId, {
+            isVerified: true,
+            stripeVerificationSessionId: session.id,
+            verificationStatus: 'verified',
+            lastVerifiedAt: new Date()
+         });
+         console.log(`User ${userId} successfully verified via Stripe`);
+      } catch (updateError) {
+         console.error('Error updating user:', updateError.message);
+         return res.status(500).json({
+            success: false,
+            message: 'Failed to update user verification status'
+         });
+      }
+   }
+
+   res.json({ success: true });
+};
 
 const signin = async (req, res) => {
    try {
@@ -332,4 +363,4 @@ const verifySigninOtp = async (req, res) => {
 };
 
 
-module.exports = { initiateSignup, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp }
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp }

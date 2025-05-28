@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../../controllers/v1/authControllers');
 
+router.post('/stripe/webhook', authController.stripeWebhookHandler);
 router.post('/signup/initiate', authController.initiateSignup);
 router.post('/signup/verify-signup-otp', authController.verifySignupOtp);
 router.post('/signin/verify-signin-otp', authController.verifySigninOtp);
