@@ -199,53 +199,46 @@ const session = await stripe.identity.verificationSessions.create({
 };
 
 const stripeWebhookHandler = async (req, res) => {
-   const sig = req.headers['stripe-signature'];
-   let event;
+  const sig = req.headers['stripe-signature'];
+  
+  try {
+    const event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
 
-   try {
-      event = stripe.webhooks.constructEvent(
-         req.body,
-         sig,
-         process.env.STRIPE_WEBHOOK_SECRET
-      );
-   } catch (err) {
-      console.error('Webhook signature verification failed:', err.message);
-      return res.status(400).json({
-         success: false,
-         message: `Webhook Error: ${err.message}`
-      });
-   }
-
-   if (event.type === 'identity.verification_session.verified') {
+    // Handle verification session events
+    if (event.type.startsWith('identity.verification_session.')) {
       const session = event.data.object;
       const userId = session.metadata.userId;
 
       if (!userId) {
-         console.error('No user ID in verification session metadata');
-         return res.status(400).json({
-            success: false,
-            message: 'No user ID in verification session metadata'
-         });
+        console.error('Missing user ID in metadata');
+        return res.status(400).send('Missing user ID');
       }
 
-      try {
-         await User.findByIdAndUpdate(userId, {
-            isVerified: true,
-            stripeVerificationSessionId: session.id,
-            verificationStatus: 'verified',
-            lastVerifiedAt: new Date()
-         });
-         console.log(`User ${userId} successfully verified via Stripe`);
-      } catch (updateError) {
-         console.error('Error updating user:', updateError.message);
-         return res.status(500).json({
-            success: false,
-            message: 'Failed to update user verification status'
-         });
-      }
-   }
+      const statusMap = {
+        'identity.verification_session.verified': 'verified',
+        'identity.verification_session.requires_input': 'requires_input',
+        'identity.verification_session.canceled': 'canceled'
+      };
 
-   res.json({ success: true });
+      await User.findByIdAndUpdate(userId, {
+        verificationStatus: statusMap[event.type],
+        lastVerifiedAt: new Date(),
+        isVerified: event.type === 'identity.verification_session.verified'
+      });
+
+      console.log(`Updated verification status for user ${userId}: ${statusMap[event.type]}`);
+    }
+
+    res.json({ received: true });
+
+  } catch (err) {
+    console.error(`Webhook Error: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
 };
 
 const signin = async (req, res) => {
