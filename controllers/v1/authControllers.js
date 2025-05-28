@@ -208,7 +208,6 @@ const stripeWebhookHandler = async (req, res) => {
       process.env.STRIPE_WEBHOOK_SECRET
     );
 
-    // Handle verification session events
     if (event.type.startsWith('identity.verification_session.')) {
       const session = event.data.object;
       const userId = session.metadata.userId;
