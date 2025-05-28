@@ -130,24 +130,21 @@ const savePersonalInfo = async (req, res) => {
    }
 };
 
+
 const initiateIdentityVerification = async (req, res) => {
    try {
       let { phone } = req.body;
 
       if (!phone) {
-         return res.status(400).json({
-            success: false,
-            message: 'Phone number is required'
-         });
+         return res.status(400).json({ success: false, message: 'Phone number is required' });
       }
-
 
       const user = await User.findOne({ phone, isOtpVerified: true });
 
       if (!user) {
          return res.status(403).json({
             success: false,
-            message: 'Please complete previous steps first (OTP verification)'
+            message: 'Please complete OTP verification first'
          });
       }
 
@@ -158,7 +155,6 @@ const initiateIdentityVerification = async (req, res) => {
          limit: 1
       });
 
-
       if (customers.data.length === 0) {
          return res.status(404).json({
             success: false,
@@ -168,44 +164,79 @@ const initiateIdentityVerification = async (req, res) => {
 
       const customer = customers.data[0];
 
-      if (!customer.name) {
-         return res.status(400).json({
-            success: false,
-            message: 'Stripe customer is missing required information (name)'
-         });
-      }
+const session = await stripe.identity.verificationSessions.create({
+  type: 'document',
+  metadata: {
+    userId: user._id.toString()
+  },
+  return_url: 'http://localhost:3000/api/auth/stripe/webhook',
+  options: {
+    document: {
+      require_id_number: false,
+      allowed_types: ['driving_license', 'passport', 'id_card'], // ✅ Corrected here
+    }
+  }
+});
 
-      user.isVerified = true;
-      user.stripeCustomerId = customer.id;
-      await user.save();
 
-      const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY, {
-         expiresIn: '7d'
-      });
 
       res.status(200).json({
          success: true,
-         message: 'Identity verification successful',
-         nextStep: '/dashboard',
-         customer: {
-            name: customer.name,
-            phone: customer.phone,
-            stripeId: customer.id
-         },
-         token
+         message: 'Stripe identity verification session created',
+         verificationUrl: session.url
       });
 
    } catch (error) {
       console.error('Identity verification error:', error);
       res.status(500).json({
          success: false,
-         message: 'Error during identity verification',
+         message: 'Server error during identity verification',
          error: error.message
       });
    }
 };
 
+const stripeWebhookHandler = async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  
+  try {
+    const event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
 
+    if (event.type.startsWith('identity.verification_session.')) {
+      const session = event.data.object;
+      const userId = session.metadata.userId;
+
+      if (!userId) {
+        console.error('Missing user ID in metadata');
+        return res.status(400).send('Missing user ID');
+      }
+
+      const statusMap = {
+        'identity.verification_session.verified': 'verified',
+        'identity.verification_session.requires_input': 'requires_input',
+        'identity.verification_session.canceled': 'canceled'
+      };
+
+      await User.findByIdAndUpdate(userId, {
+        verificationStatus: statusMap[event.type],
+        lastVerifiedAt: new Date(),
+        isVerified: event.type === 'identity.verification_session.verified'
+      });
+
+      console.log(`Updated verification status for user ${userId}: ${statusMap[event.type]}`);
+    }
+
+    res.json({ received: true });
+
+  } catch (err) {
+    console.error(`Webhook Error: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+};
 
 const signin = async (req, res) => {
    try {
@@ -264,7 +295,7 @@ const signin = async (req, res) => {
 const verifySigninOtp = async (req, res) => {
    try {
       const { phone, otp } = req.body;
-      
+
       if (!phone || !otp) {
          return res.status(400).json({
             success: false,
@@ -322,4 +353,4 @@ const verifySigninOtp = async (req, res) => {
 };
 
 
-module.exports = { initiateSignup, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp }
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp }

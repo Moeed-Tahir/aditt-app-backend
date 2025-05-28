@@ -20,8 +20,10 @@ const PORT = process.env.PORT || 3000;
         });
 
         const authRoutes = require('./routes/v1/authRoute');
+        const stripeRoutes = require('./routes/v1/stripeRoute');
 
         app.use('/api/auth', authRoutes);
+        app.use('/api/auth/stripe', express.raw({ type: 'application/json' }), stripeRoutes);
 
         app.use((err, req, res, next) => {
             console.error(err.stack);
