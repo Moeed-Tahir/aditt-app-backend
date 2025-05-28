@@ -91,8 +91,6 @@ const verifySignupOtp = async (req, res) => {
    }
 };
 
-
-
 const savePersonalInfo = async (req, res) => {
    try {
       const { phone, dateOfBirth, gender, zipCode } = req.body;
