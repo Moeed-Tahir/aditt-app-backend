@@ -13,6 +13,10 @@ const PORT = process.env.PORT || 3000;
         await connectDB();
 
         app.use(cors());
+
+        const stripeRoutes = require('./routes/v1/stripeRoute');
+        app.use('/api/auth/stripe', stripeRoutes);
+
         app.use(express.json());
 
         app.get('/', (req, res) => {
@@ -20,11 +24,9 @@ const PORT = process.env.PORT || 3000;
         });
 
         const authRoutes = require('./routes/v1/authRoute');
-        const stripeRoutes = require('./routes/v1/stripeRoute');
-
         app.use('/api/auth', authRoutes);
-        app.use('/api/auth/stripe', express.raw({ type: 'application/json' }), stripeRoutes);
 
+        // Error handling
         app.use((err, req, res, next) => {
             console.error(err.stack);
             res.status(500).json({ error: "Internal Server Error" });

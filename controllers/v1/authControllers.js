@@ -2,6 +2,8 @@ const sendOtp = require("../../services/otpService");
 const User = require('../../models/ConsumerUser.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const jwt = require("jsonwebtoken");
+const dotenv = require("dotenv");
+dotenv.config();
 
 const initiateSignup = async (req, res) => {
    try {
@@ -171,11 +173,12 @@ const session = await stripe.identity.verificationSessions.create({
   metadata: {
     userId: user._id.toString()
   },
-  return_url: 'http://localhost:3000/api/auth/stripe/webhook',
+  return_url: 'https://aditt-app-backend-henna.vercel.app/verification-success',
   options: {
     document: {
       require_id_number: false,
-      allowed_types: ['driving_license', 'passport', 'id_card'], // ✅ Corrected here
+      allowed_types: ['driving_license', 'passport', 'id_card'],
+      require_matching_selfie: true, // 🔍 Enables face recognition (selfie match)
     }
   }
 });
@@ -200,44 +203,63 @@ const session = await stripe.identity.verificationSessions.create({
 
 const stripeWebhookHandler = async (req, res) => {
   const sig = req.headers['stripe-signature'];
+
+  if (!sig) {
+    console.error('No Stripe signature found');
+    return res.status(400).send('No Stripe signature found');
+  }
+
+  let event;
   
   try {
-    const event = stripe.webhooks.constructEvent(
-      req.body,
+    // Use the raw body buffer directly (no toString conversion)
+    const rawBody = req.body; // This is already a Buffer from bodyParser.raw()
+
+    event = stripe.webhooks.constructEvent(
+      rawBody,
       sig,
       process.env.STRIPE_WEBHOOK_SECRET
     );
-
-    if (event.type.startsWith('identity.verification_session.')) {
-      const session = event.data.object;
-      const userId = session.metadata.userId;
-
-      if (!userId) {
-        console.error('Missing user ID in metadata');
-        return res.status(400).send('Missing user ID');
-      }
-
-      const statusMap = {
-        'identity.verification_session.verified': 'verified',
-        'identity.verification_session.requires_input': 'requires_input',
-        'identity.verification_session.canceled': 'canceled'
-      };
-
-      await User.findByIdAndUpdate(userId, {
-        verificationStatus: statusMap[event.type],
-        lastVerifiedAt: new Date(),
-        isVerified: event.type === 'identity.verification_session.verified'
-      });
-
-      console.log(`Updated verification status for user ${userId}: ${statusMap[event.type]}`);
-    }
-
-    res.json({ received: true });
-
   } catch (err) {
-    console.error(`Webhook Error: ${err.message}`);
+    console.error(`Webhook signature verification failed:`, err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
+
+  // Process the event
+  console.log(`Event type: ${event.type}`);
+
+  if (event.type.startsWith('identity.verification_session.')) {
+    const session = event.data.object;
+    const userId = session.metadata?.userId;
+
+    if (!userId) {
+      console.error('Missing user ID in metadata');
+      return res.status(400).send('Missing user ID');
+    }
+
+    const statusMap = {
+      'identity.verification_session.verified': 'verified',
+      'identity.verification_session.requires_input': 'requires_input',
+      'identity.verification_session.canceled': 'canceled',
+      'identity.verification_session.processing': 'processing',
+    };
+
+    const status = statusMap[event.type] || 'unknown';
+    
+    const updateData = {
+      verificationStatus: status,
+      lastVerifiedAt: new Date()
+    };
+
+    if (status === 'verified') {
+      updateData.isVerified = true;
+    }
+
+    await User.findByIdAndUpdate(userId, updateData);
+    console.log(`Would update user ${userId} to status: ${status}`);
+  }
+
+  res.json({ received: true });
 };
 
 const signin = async (req, res) => {
