@@ -24,7 +24,8 @@ const initiateSignup = async (req, res) => {
          });
       }
 
-      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      // const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      const otp = 5555;
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
       const user = existingUser || new User({ name, phone });
@@ -32,12 +33,13 @@ const initiateSignup = async (req, res) => {
       user.otpExpires = otpExpires;
       await user.save();
 
-      await sendOtp(phone, otp);
+      // await sendOtp(phone, otp);
 
       res.status(200).json({
          success: true,
          message: 'OTP sent successfully',
-         phone: phone
+         phone: phone,
+         otp: otp
       });
 
    } catch (error) {
@@ -150,36 +152,36 @@ const initiateIdentityVerification = async (req, res) => {
          });
       }
 
-      phone = phone.replace(/^\+/, '');
+      // phone = phone.replace(/^\+/, '');
 
-      const customers = await stripe.customers.search({
-         query: `phone:'${phone}'`,
-         limit: 1
+      // const customers = await stripe.customers.search({
+      //    query: `phone:'${phone}'`,
+      //    limit: 1
+      // });
+
+      // if (customers.data.length === 0) {
+      //    return res.status(404).json({
+      //       success: false,
+      //       message: 'No Stripe customer account found for this phone number'
+      //    });
+      // }
+
+      // const customer = customers.data[0];
+
+      const session = await stripe.identity.verificationSessions.create({
+         type: 'document',
+         metadata: {
+            userId: user._id.toString()
+         },
+         return_url: 'https://aditt-app-backend.vercel.app/verification-success',
+         options: {
+            document: {
+               require_id_number: false,
+               allowed_types: ['driving_license', 'passport', 'id_card'],
+               require_matching_selfie: true, // 🔍 Enables face recognition (selfie match)
+            }
+         }
       });
-
-      if (customers.data.length === 0) {
-         return res.status(404).json({
-            success: false,
-            message: 'No Stripe customer account found for this phone number'
-         });
-      }
-
-      const customer = customers.data[0];
-
-const session = await stripe.identity.verificationSessions.create({
-  type: 'document',
-  metadata: {
-    userId: user._id.toString()
-  },
-  return_url: 'https://aditt-app-backend-henna.vercel.app/verification-success',
-  options: {
-    document: {
-      require_id_number: false,
-      allowed_types: ['driving_license', 'passport', 'id_card'],
-      require_matching_selfie: true, // 🔍 Enables face recognition (selfie match)
-    }
-  }
-});
 
 
 
@@ -200,64 +202,64 @@ const session = await stripe.identity.verificationSessions.create({
 };
 
 const stripeWebhookHandler = async (req, res) => {
-  const sig = req.headers['stripe-signature'];
+   const sig = req.headers['stripe-signature'];
 
-  if (!sig) {
-    console.error('No Stripe signature found');
-    return res.status(400).send('No Stripe signature found');
-  }
+   if (!sig) {
+      console.error('No Stripe signature found');
+      return res.status(400).send('No Stripe signature found');
+   }
 
-  let event;
-  
-  try {
-    // Use the raw body buffer directly (no toString conversion)
-    const rawBody = req.body; // This is already a Buffer from bodyParser.raw()
+   let event;
 
-    event = stripe.webhooks.constructEvent(
-      rawBody,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    console.error(`Webhook signature verification failed:`, err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
+   try {
+      // Use the raw body buffer directly (no toString conversion)
+      const rawBody = req.body; // This is already a Buffer from bodyParser.raw()
 
-  // Process the event
-  console.log(`Event type: ${event.type}`);
+      event = stripe.webhooks.constructEvent(
+         rawBody,
+         sig,
+         process.env.STRIPE_WEBHOOK_SECRET
+      );
+   } catch (err) {
+      console.error(`Webhook signature verification failed:`, err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+   }
 
-  if (event.type.startsWith('identity.verification_session.')) {
-    const session = event.data.object;
-    const userId = session.metadata?.userId;
+   // Process the event
+   console.log(`Event type: ${event.type}`);
 
-    if (!userId) {
-      console.error('Missing user ID in metadata');
-      return res.status(400).send('Missing user ID');
-    }
+   if (event.type.startsWith('identity.verification_session.')) {
+      const session = event.data.object;
+      const userId = session.metadata?.userId;
 
-    const statusMap = {
-      'identity.verification_session.verified': 'verified',
-      'identity.verification_session.requires_input': 'requires_input',
-      'identity.verification_session.canceled': 'canceled',
-      'identity.verification_session.processing': 'processing',
-    };
+      if (!userId) {
+         console.error('Missing user ID in metadata');
+         return res.status(400).send('Missing user ID');
+      }
 
-    const status = statusMap[event.type] || 'unknown';
-    
-    const updateData = {
-      verificationStatus: status,
-      lastVerifiedAt: new Date()
-    };
+      const statusMap = {
+         'identity.verification_session.verified': 'verified',
+         'identity.verification_session.requires_input': 'requires_input',
+         'identity.verification_session.canceled': 'canceled',
+         'identity.verification_session.processing': 'processing',
+      };
 
-    if (status === 'verified') {
-      updateData.isVerified = true;
-    }
+      const status = statusMap[event.type] || 'unknown';
 
-    await User.findByIdAndUpdate(userId, updateData);
-    console.log(`Would update user ${userId} to status: ${status}`);
-  }
+      const updateData = {
+         verificationStatus: status,
+         lastVerifiedAt: new Date()
+      };
 
-  res.json({ received: true });
+      if (status === 'verified') {
+         updateData.isVerified = true;
+      }
+
+      await User.findByIdAndUpdate(userId, updateData);
+      console.log(`Would update user ${userId} to status: ${status}`);
+   }
+
+   res.json({ received: true });
 };
 
 const signin = async (req, res) => {
@@ -288,7 +290,8 @@ const signin = async (req, res) => {
          });
       }
 
-      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      // const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      const otp = 5555
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
       user.otp = otp;
@@ -297,12 +300,13 @@ const signin = async (req, res) => {
 
       await user.save();
 
-      await sendOtp(phone, otp);
+      // await sendOtp(phone, otp);
 
       return res.status(200).json({
          success: true,
          message: 'OTP sent to phone number',
-         phone
+         phone,
+         otp: otp
       });
 
    } catch (error) {
