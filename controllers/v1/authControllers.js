@@ -33,13 +33,18 @@ const initiateSignup = async (req, res) => {
       user.otpExpires = otpExpires;
       await user.save();
 
+      const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY, {
+         expiresIn: '7d'
+      });
+
       // await sendOtp(phone, otp);
 
       res.status(200).json({
          success: true,
          message: 'OTP sent successfully',
-         phone: phone,
-         otp: otp
+         userId: user._id,
+         otp,
+         token,
       });
 
    } catch (error) {
@@ -53,16 +58,16 @@ const initiateSignup = async (req, res) => {
 
 const verifySignupOtp = async (req, res) => {
    try {
-      const { phone, otp } = req.body;
+      const { userId, otp } = req.body;
 
-      if (!phone || !otp) {
+      if (!userId || !otp) {
          return res.status(400).json({
             success: false,
-            message: 'Phone number and OTP are required'
+            message: 'UserId and OTP are required'
          });
       }
 
-      const user = await User.findOne({ phone });
+      const user = await User.findOne({ _id: userId });
       if (!user) {
          return res.status(404).json({
             success: false,
@@ -82,7 +87,8 @@ const verifySignupOtp = async (req, res) => {
 
       res.status(200).json({
          success: true,
-         message: 'Phone number verified successfully',
+         message: 'User verified successfully',
+         userId: user._id,
          nextStep: '/complete-profile'
       });
 
@@ -97,20 +103,20 @@ const verifySignupOtp = async (req, res) => {
 
 const savePersonalInfo = async (req, res) => {
    try {
-      const { phone, dateOfBirth, gender, zipCode } = req.body;
+      const { userId, dateOfBirth, gender, zipCode } = req.body;
 
-      if (!phone || !dateOfBirth || !gender || !zipCode) {
+      if (!userId || !dateOfBirth || !gender || !zipCode) {
          return res.status(400).json({
             success: false,
             message: 'All personal information fields are required'
          });
       }
 
-      const user = await User.findOne({ phone, isOtpVerified: true });
+      const user = await User.findOne({ _id: userId, isOtpVerified: true });
       if (!user) {
          return res.status(403).json({
             success: false,
-            message: 'Please complete phone verification first'
+            message: 'Please complete verification first'
          });
       }
 
@@ -122,6 +128,8 @@ const savePersonalInfo = async (req, res) => {
       res.status(200).json({
          success: true,
          message: 'Personal information saved successfully',
+         userId: user._id,
+         token: user.token,
          nextStep: '/identity-verification'
       });
 
@@ -137,13 +145,13 @@ const savePersonalInfo = async (req, res) => {
 
 const initiateIdentityVerification = async (req, res) => {
    try {
-      let { phone } = req.body;
+      let { userId } = req.body;
 
-      if (!phone) {
-         return res.status(400).json({ success: false, message: 'Phone number is required' });
+      if (!userId) {
+         return res.status(400).json({ success: false, message: 'User ID is required' });
       }
 
-      const user = await User.findOne({ phone, isOtpVerified: true });
+      const user = await User.findOne({ _id: userId, isOtpVerified: true });
 
       if (!user) {
          return res.status(403).json({
@@ -183,11 +191,11 @@ const initiateIdentityVerification = async (req, res) => {
          }
       });
 
-
-
       res.status(200).json({
          success: true,
          message: 'Stripe identity verification session created',
+         userId: user._id,
+         token: user.token,
          verificationUrl: session.url
       });
 
@@ -264,16 +272,16 @@ const stripeWebhookHandler = async (req, res) => {
 
 const signin = async (req, res) => {
    try {
-      const { phone } = req.body;
+      const { userId } = req.body;
 
-      if (!phone) {
+      if (!userId) {
          return res.status(400).json({
             success: false,
-            message: 'Phone number is required'
+            message: 'User ID is required'
          });
       }
 
-      const user = await User.findOne({ phone });
+      const user = await User.findOne({ _id: userId });
 
       if (!user) {
          return res.status(400).json({
@@ -305,7 +313,7 @@ const signin = async (req, res) => {
       return res.status(200).json({
          success: true,
          message: 'OTP sent to phone number',
-         phone,
+         userId: user._id,
          otp: otp
       });
 
@@ -320,16 +328,16 @@ const signin = async (req, res) => {
 
 const verifySigninOtp = async (req, res) => {
    try {
-      const { phone, otp } = req.body;
+      const { userId, otp } = req.body;
 
-      if (!phone || !otp) {
+      if (!userId || !otp) {
          return res.status(400).json({
             success: false,
-            message: 'Phone number and OTP are required'
+            message: 'user ID and OTP are required'
          });
       }
 
-      const user = await User.findOne({ phone });
+      const user = await User.findOne({ _id: userId });
 
       if (!user) {
          return res.status(404).json({
@@ -354,6 +362,7 @@ const verifySigninOtp = async (req, res) => {
       const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY, {
          expiresIn: '7d'
       });
+
 
       res.status(200).json({
          success: true,

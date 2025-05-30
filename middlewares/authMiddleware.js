@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const ConsumerUser = require('../models/ConsumerUser.model');
 const secret_Key = process.env.SECRET_KEY;
 
 const authenticateJWT = async (req, res, next) => {
@@ -9,9 +10,13 @@ const authenticateJWT = async (req, res, next) => {
 
     try {
       const decoded = jwt.verify(token, secret_Key);
+      const user = await ConsumerUser.findById(decoded.userId);
 
-      req.user = decoded;
+      if (!user) {
+        return res.status(401).json({ status: 'failed', message: 'User not found' });
+      }
 
+      req.user = user;
       next();
     } catch (error) {
       console.error(`Error authenticating JWT: ${error.message}`);
