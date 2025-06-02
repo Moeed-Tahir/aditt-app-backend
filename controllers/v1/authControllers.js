@@ -229,7 +229,7 @@ const initiateIdentityVerification = async (req, res) => {
          metadata: {
             userId: user._id.toString()
          },
-         return_url: `http://localhost:3000/api/auth/verification-success?userId=${user._id}`,
+         return_url: `https://aditt-app-backend.vercel.app/api/auth/verification-success?userId=${user._id}`,
          options: {
             document: {
                require_id_number: false,
