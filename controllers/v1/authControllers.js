@@ -212,8 +212,7 @@ const stripeWebhookHandler = async (req, res) => {
   let event;
   
   try {
-    // Use the raw body buffer directly (no toString conversion)
-    const rawBody = req.body; // This is already a Buffer from bodyParser.raw()
+    const rawBody = req.body;
 
     event = stripe.webhooks.constructEvent(
       rawBody,
@@ -225,7 +224,6 @@ const stripeWebhookHandler = async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Process the event
   console.log(`Event type: ${event.type}`);
 
   if (event.type.startsWith('identity.verification_session.')) {
