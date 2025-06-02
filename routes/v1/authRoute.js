@@ -9,5 +9,6 @@ router.post('/signin/verify-signin-otp', authController.verifySigninOtp);
 router.post('/signin', authController.signin);
 router.post('/signup/personal-info', authController.savePersonalInfo);
 router.post('/signup/verify-identity', authController.initiateIdentityVerification);
+router.get('/verification-success', authController.handleVerificationSuccess);
 
 module.exports = router;

@@ -134,6 +134,23 @@ const savePersonalInfo = async (req, res) => {
    }
 };
 
+const handleVerificationSuccess = async (req, res) => {
+   try {
+
+      res.status(200).json({
+         success: true,
+         message: 'Verification completed successfully. You can now proceed to the dashboard.',
+      });
+
+   } catch (error) {
+      console.error('Verification success handler error:', error);
+      res.status(500).json({
+         success: false,
+         message: 'Server error during verification success handling',
+         error: error.message
+      });
+   }
+};
 
 const initiateIdentityVerification = async (req, res) => {
    try {
@@ -168,27 +185,28 @@ const initiateIdentityVerification = async (req, res) => {
 
       const customer = customers.data[0];
 
-const session = await stripe.identity.verificationSessions.create({
-  type: 'document',
-  metadata: {
-    userId: user._id.toString()
-  },
-  return_url: 'https://aditt-app-backend-henna.vercel.app/verification-success',
-  options: {
-    document: {
-      require_id_number: false,
-      allowed_types: ['driving_license', 'passport', 'id_card'],
-      require_matching_selfie: true, // 🔍 Enables face recognition (selfie match)
-    }
-  }
-});
+      const session = await stripe.identity.verificationSessions.create({
+         type: 'document',
+         metadata: {
+            userId: user._id.toString()
+         },
+         return_url: `http://localhost:3000/api/auth/verification-success`,
+         options: {
+            document: {
+               require_id_number: false,
+               allowed_types: ['driving_license', 'passport', 'id_card'],
+               // require_matching_selfie: true,
+            }
+         }
+      });
 
 
 
       res.status(200).json({
          success: true,
          message: 'Stripe identity verification session created',
-         verificationUrl: session.url
+         verificationUrl: session.url,
+         sessionId: session.id 
       });
 
    } catch (error) {
@@ -202,62 +220,62 @@ const session = await stripe.identity.verificationSessions.create({
 };
 
 const stripeWebhookHandler = async (req, res) => {
-  const sig = req.headers['stripe-signature'];
+   const sig = req.headers['stripe-signature'];
 
-  if (!sig) {
-    console.error('No Stripe signature found');
-    return res.status(400).send('No Stripe signature found');
-  }
+   if (!sig) {
+      console.error('No Stripe signature found');
+      return res.status(400).send('No Stripe signature found');
+   }
 
-  let event;
-  
-  try {
-    const rawBody = req.body;
+   let event;
 
-    event = stripe.webhooks.constructEvent(
-      rawBody,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    console.error(`Webhook signature verification failed:`, err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
+   try {
+      const rawBody = req.body;
 
-  console.log(`Event type: ${event.type}`);
+      event = stripe.webhooks.constructEvent(
+         rawBody,
+         sig,
+         process.env.STRIPE_WEBHOOK_SECRET
+      );
+   } catch (err) {
+      console.error(`Webhook signature verification failed:`, err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+   }
 
-  if (event.type.startsWith('identity.verification_session.')) {
-    const session = event.data.object;
-    const userId = session.metadata?.userId;
+   console.log(`Event type: ${event.type}`);
 
-    if (!userId) {
-      console.error('Missing user ID in metadata');
-      return res.status(400).send('Missing user ID');
-    }
+   if (event.type.startsWith('identity.verification_session.')) {
+      const session = event.data.object;
+      const userId = session.metadata?.userId;
 
-    const statusMap = {
-      'identity.verification_session.verified': 'verified',
-      'identity.verification_session.requires_input': 'requires_input',
-      'identity.verification_session.canceled': 'canceled',
-      'identity.verification_session.processing': 'processing',
-    };
+      if (!userId) {
+         console.error('Missing user ID in metadata');
+         return res.status(400).send('Missing user ID');
+      }
 
-    const status = statusMap[event.type] || 'unknown';
-    
-    const updateData = {
-      verificationStatus: status,
-      lastVerifiedAt: new Date()
-    };
+      const statusMap = {
+         'identity.verification_session.verified': 'verified',
+         'identity.verification_session.requires_input': 'requires_input',
+         'identity.verification_session.canceled': 'canceled',
+         'identity.verification_session.processing': 'processing',
+      };
 
-    if (status === 'verified') {
-      updateData.isVerified = true;
-    }
+      const status = statusMap[event.type] || 'unknown';
 
-    await User.findByIdAndUpdate(userId, updateData);
-    console.log(`Would update user ${userId} to status: ${status}`);
-  }
+      const updateData = {
+         verificationStatus: status,
+         lastVerifiedAt: new Date()
+      };
 
-  res.json({ received: true });
+      if (status === 'verified') {
+         updateData.isVerified = true;
+      }
+
+      await User.findByIdAndUpdate(userId, updateData);
+      console.log(`Would update user ${userId} to status: ${status}`);
+   }
+
+   res.json({ received: true });
 };
 
 const signin = async (req, res) => {
@@ -375,4 +393,4 @@ const verifySigninOtp = async (req, res) => {
 };
 
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp }
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp,handleVerificationSuccess }
