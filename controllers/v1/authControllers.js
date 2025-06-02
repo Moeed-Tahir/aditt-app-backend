@@ -24,7 +24,8 @@ const initiateSignup = async (req, res) => {
          });
       }
 
-      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      // const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      const otp = 5555;
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
       const user = existingUser || new User({ name, phone });
@@ -32,12 +33,18 @@ const initiateSignup = async (req, res) => {
       user.otpExpires = otpExpires;
       await user.save();
 
-      await sendOtp(phone, otp);
+      const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY, {
+         expiresIn: '7d'
+      });
+
+      // await sendOtp(phone, otp);
 
       res.status(200).json({
          success: true,
          message: 'OTP sent successfully',
-         phone: phone
+         userId: user._id,
+         otp,
+         token,
       });
 
    } catch (error) {
@@ -51,16 +58,16 @@ const initiateSignup = async (req, res) => {
 
 const verifySignupOtp = async (req, res) => {
    try {
-      const { phone, otp } = req.body;
+      const { userId, otp } = req.body;
 
-      if (!phone || !otp) {
+      if (!userId || !otp) {
          return res.status(400).json({
             success: false,
-            message: 'Phone number and OTP are required'
+            message: 'UserId and OTP are required'
          });
       }
 
-      const user = await User.findOne({ phone });
+      const user = await User.findOne({ _id: userId });
       if (!user) {
          return res.status(404).json({
             success: false,
@@ -80,7 +87,8 @@ const verifySignupOtp = async (req, res) => {
 
       res.status(200).json({
          success: true,
-         message: 'Phone number verified successfully',
+         message: 'User verified successfully',
+         userId: user._id,
          nextStep: '/complete-profile'
       });
 
@@ -93,24 +101,22 @@ const verifySignupOtp = async (req, res) => {
    }
 };
 
-
-
 const savePersonalInfo = async (req, res) => {
    try {
-      const { phone, dateOfBirth, gender, zipCode } = req.body;
+      const { userId, dateOfBirth, gender, zipCode } = req.body;
 
-      if (!phone || !dateOfBirth || !gender || !zipCode) {
+      if (!userId || !dateOfBirth || !gender || !zipCode) {
          return res.status(400).json({
             success: false,
             message: 'All personal information fields are required'
          });
       }
 
-      const user = await User.findOne({ phone, isOtpVerified: true });
+      const user = await User.findOne({ _id: userId, isOtpVerified: true });
       if (!user) {
          return res.status(403).json({
             success: false,
-            message: 'Please complete phone verification first'
+            message: 'Please complete verification first'
          });
       }
 
@@ -122,6 +128,8 @@ const savePersonalInfo = async (req, res) => {
       res.status(200).json({
          success: true,
          message: 'Personal information saved successfully',
+         userId: user._id,
+         token: user.token,
          nextStep: '/identity-verification'
       });
 
@@ -136,10 +144,41 @@ const savePersonalInfo = async (req, res) => {
 
 const handleVerificationSuccess = async (req, res) => {
    try {
+      console.log("Call")
+      const { userId } = req.query;
+
+      if (!userId) {
+         return res.status(400).json({
+            success: false,
+            message: 'User ID is required'
+         });
+      }
+
+      const user = await User.findOne({ _id: userId });
+      console.log("user", user);
+
+      if (!user) {
+         return res.status(404).json({
+            success: false,
+            message: 'User not found'
+         });
+      }
+
+      if (!user.isVerified) {
+         return res.status(403).json({
+            success: false,
+            message: 'Verification not completed yet. Please try again later.'
+         });
+      }
 
       res.status(200).json({
          success: true,
          message: 'Verification completed successfully. You can now proceed to the dashboard.',
+         user: {
+            id: user._id,
+            isVerified: user.isVerified,
+            verificationStatus: user.verificationStatus
+         }
       });
 
    } catch (error) {
@@ -154,13 +193,13 @@ const handleVerificationSuccess = async (req, res) => {
 
 const initiateIdentityVerification = async (req, res) => {
    try {
-      let { phone } = req.body;
+      let { userId } = req.body;
 
-      if (!phone) {
-         return res.status(400).json({ success: false, message: 'Phone number is required' });
+      if (!userId) {
+         return res.status(400).json({ success: false, message: 'User ID is required' });
       }
 
-      const user = await User.findOne({ phone, isOtpVerified: true });
+      const user = await User.findOne({ _id: userId, isOtpVerified: true });
 
       if (!user) {
          return res.status(403).json({
@@ -169,33 +208,36 @@ const initiateIdentityVerification = async (req, res) => {
          });
       }
 
-      phone = phone.replace(/^\+/, '');
+      // phone = phone.replace(/^\+/, '');
 
-      const customers = await stripe.customers.search({
-         query: `phone:'${phone}'`,
-         limit: 1
-      });
+      // const customers = await stripe.customers.search({
+      //    query: `phone:'${phone}'`,
+      //    limit: 1
+      // });
 
-      if (customers.data.length === 0) {
-         return res.status(404).json({
-            success: false,
-            message: 'No Stripe customer account found for this phone number'
-         });
-      }
+      // if (customers.data.length === 0) {
+      //    return res.status(404).json({
+      //       success: false,
+      //       message: 'No Stripe customer account found for this phone number'
+      //    });
+      // }
 
-      const customer = customers.data[0];
+      // const customer = customers.data[0];
 
       const session = await stripe.identity.verificationSessions.create({
          type: 'document',
          metadata: {
             userId: user._id.toString()
          },
-         return_url: `http://localhost:3000/api/auth/verification-success`,
+         return_url: `http://localhost:3000/api/auth/verification-success?userId=${user._id}`,
          options: {
             document: {
                require_id_number: false,
                allowed_types: ['driving_license', 'passport', 'id_card'],
-               // require_matching_selfie: true,
+               require_id_number: true,
+               // Add these if you need more control
+               require_live_capture: true,
+               require_matching_selfie: true // Set to true if you need selfie matching
             }
          }
       });
@@ -205,8 +247,9 @@ const initiateIdentityVerification = async (req, res) => {
       res.status(200).json({
          success: true,
          message: 'Stripe identity verification session created',
-         verificationUrl: session.url,
-         sessionId: session.id 
+         userId: user._id,
+         token: user.token,
+         verificationUrl: session.url
       });
 
    } catch (error) {
@@ -231,7 +274,6 @@ const stripeWebhookHandler = async (req, res) => {
 
    try {
       const rawBody = req.body;
-
       event = stripe.webhooks.constructEvent(
          rawBody,
          sig,
@@ -255,9 +297,9 @@ const stripeWebhookHandler = async (req, res) => {
 
       const statusMap = {
          'identity.verification_session.verified': 'verified',
-         'identity.verification_session.requires_input': 'requires_input',
          'identity.verification_session.canceled': 'canceled',
          'identity.verification_session.processing': 'processing',
+         'identity.verification_session.requires_input': 'requires_input',
       };
 
       const status = statusMap[event.type] || 'unknown';
@@ -271,8 +313,19 @@ const stripeWebhookHandler = async (req, res) => {
          updateData.isVerified = true;
       }
 
-      await User.findByIdAndUpdate(userId, updateData);
-      console.log(`Would update user ${userId} to status: ${status}`);
+      console.log('Updating user verification status:', {
+         userId,
+         status,
+         verificationSessionId: session.id
+      });
+
+      try {
+         await User.findByIdAndUpdate(userId, updateData);
+         console.log(`Successfully updated user ${userId} to status: ${status}`);
+      } catch (err) {
+         console.error(`Error updating user ${userId}:`, err);
+         return res.status(500).send('Error updating user');
+      }
    }
 
    res.json({ received: true });
@@ -280,16 +333,16 @@ const stripeWebhookHandler = async (req, res) => {
 
 const signin = async (req, res) => {
    try {
-      const { phone } = req.body;
+      const { userId } = req.body;
 
-      if (!phone) {
+      if (!userId) {
          return res.status(400).json({
             success: false,
-            message: 'Phone number is required'
+            message: 'User ID is required'
          });
       }
 
-      const user = await User.findOne({ phone });
+      const user = await User.findOne({ _id: userId });
 
       if (!user) {
          return res.status(400).json({
@@ -306,7 +359,8 @@ const signin = async (req, res) => {
          });
       }
 
-      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      // const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      const otp = 5555
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
       user.otp = otp;
@@ -315,12 +369,13 @@ const signin = async (req, res) => {
 
       await user.save();
 
-      await sendOtp(phone, otp);
+      // await sendOtp(phone, otp);
 
       return res.status(200).json({
          success: true,
          message: 'OTP sent to phone number',
-         phone
+         userId: user._id,
+         otp: otp
       });
 
    } catch (error) {
@@ -334,16 +389,16 @@ const signin = async (req, res) => {
 
 const verifySigninOtp = async (req, res) => {
    try {
-      const { phone, otp } = req.body;
+      const { userId, otp } = req.body;
 
-      if (!phone || !otp) {
+      if (!userId || !otp) {
          return res.status(400).json({
             success: false,
-            message: 'Phone number and OTP are required'
+            message: 'user ID and OTP are required'
          });
       }
 
-      const user = await User.findOne({ phone });
+      const user = await User.findOne({ _id: userId });
 
       if (!user) {
          return res.status(404).json({
@@ -369,6 +424,7 @@ const verifySigninOtp = async (req, res) => {
          expiresIn: '7d'
       });
 
+
       res.status(200).json({
          success: true,
          message: 'Phone number verified successfully',
@@ -393,4 +449,4 @@ const verifySigninOtp = async (req, res) => {
 };
 
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp,handleVerificationSuccess }
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess }
