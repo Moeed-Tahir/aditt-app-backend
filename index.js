@@ -26,6 +26,9 @@ const PORT = process.env.PORT || 3000;
         const authRoutes = require('./routes/v1/authRoute');
         app.use('/api/auth', authRoutes);
 
+        const campaignRoutes = require('./routes/v1/campaignRoute');
+        app.use('/api', campaignRoutes);
+
         // Error handling
         app.use((err, req, res, next) => {
             console.error(err.stack);
