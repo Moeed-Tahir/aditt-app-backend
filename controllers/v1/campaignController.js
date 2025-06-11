@@ -7,7 +7,8 @@ exports.getAllSortedCampaigns = async (req, res) => {
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
         
-        const { gender, page = 1 } = req.body;
+        const { gender } = req.body;
+        const { page = 1 } = req.query;
         const itemsPerPage = 10;
         const pageNum = Math.max(1, parseInt(page));
 
