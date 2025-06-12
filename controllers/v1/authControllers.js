@@ -1,8 +1,8 @@
-const sendOtp = require("../../services/otpService");
 const User = require('../../models/ConsumerUser.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const jwt = require("jsonwebtoken");
 const dotenv = require("dotenv");
+
 dotenv.config();
 
 const initiateSignup = async (req, res) => {
@@ -333,16 +333,16 @@ const stripeWebhookHandler = async (req, res) => {
 
 const signin = async (req, res) => {
    try {
-      const { userId } = req.body;
+      const { phone } = req.body;
 
-      if (!userId) {
+      if (!phone) {
          return res.status(400).json({
             success: false,
-            message: 'User ID is required'
+            message: 'Phone is required'
          });
       }
 
-      const user = await User.findOne({ _id: userId });
+      const user = await User.findOne({ phone });
 
       if (!user) {
          return res.status(400).json({
@@ -351,7 +351,6 @@ const signin = async (req, res) => {
          });
       }
 
-
       if (!user.isVerified) {
          return res.status(400).json({
             success: false,
@@ -359,8 +358,7 @@ const signin = async (req, res) => {
          });
       }
 
-      // const otp = Math.floor(1000 + Math.random() * 9000).toString();
-      const otp = 5555
+      const otp = '5555';
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
       user.otp = otp;
@@ -369,13 +367,21 @@ const signin = async (req, res) => {
 
       await user.save();
 
-      // await sendOtp(phone, otp);
+      const token = jwt.sign(
+         { userId: user._id },
+         process.env.SECRET_KEY,
+         { expiresIn: '7d' }
+      );
+
+      const { otp: _, otpExpires: __, ...safeUserData } = user.toObject();
 
       return res.status(200).json({
          success: true,
-         message: 'OTP sent to phone number',
+         message: 'User sign in successfully',
          userId: user._id,
-         otp: otp
+         token: token,
+         otp: otp,
+         user: safeUserData
       });
 
    } catch (error) {
