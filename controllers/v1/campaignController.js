@@ -330,7 +330,7 @@ exports.submitSurveyResponses = async (req, res) => {
 };
 
 
-exports.userLinkClick = async (req, res) => {
+exports.recordCampaignClick = async (req, res) => {
     let client;
     try {
         const { userId, campaignId } = req.body;
@@ -430,7 +430,7 @@ exports.userLinkClick = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error in userLinkClick:', error);
+        console.error('Error in recordCampaignClick:', error);
         return res.status(500).json({ error: 'Internal server error' });
     } finally {
         if (client) {
