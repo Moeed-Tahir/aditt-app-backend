@@ -4,6 +4,8 @@ const { ObjectId } = require('mongodb'); // Import ObjectId directly
 
 async function getUserDemographics(userId) {
     let client;
+    console.log("userId",userId);
+
     try {
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();

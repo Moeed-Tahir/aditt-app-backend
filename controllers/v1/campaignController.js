@@ -1,8 +1,6 @@
-const { connectDB } = require('../../config/connectDB');
 const { MongoClient } = require('mongodb');
 const { getUserDemographics, getAgeGroup } = require('../../utils/userUtils');
-// controllers/campaignController.js
-const { ObjectId } = require('mongodb'); // Add ObjectId import
+const { ObjectId } = require('mongodb');
 
 exports.getAllSortedCampaigns = async (req, res) => {
     let client;
@@ -116,34 +114,30 @@ exports.getAllSortedCampaigns = async (req, res) => {
     }
 };
 
-
 exports.submitQuizQuestionResponse = async (req, res) => {
     const { campaignId, questionResponse, userId } = req.body;
 
     if (!campaignId || !questionResponse || !userId) {
-        return res.status(400).json({ 
-            error: "Campaign ID, question response, and user ID are required" 
+        return res.status(400).json({
+            error: "Campaign ID, question response, and user ID are required"
         });
     }
 
-    // Validate ObjectId formats
     if (!ObjectId.isValid(campaignId) || !ObjectId.isValid(userId)) {
         return res.status(400).json({ error: "Invalid ID format" });
     }
 
     let client;
     try {
-        // Get user demographics
         const { age, gender } = await getUserDemographics(userId);
         const ageGroup = getAgeGroup(age);
 
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
 
-        // Get the current question to calculate percentages
-        const campaign = await db.collection('compaigns').findOne(
+        const campaign = await db.collection('campaigns').findOne(
             { _id: new ObjectId(campaignId) },
-            { projection: { "quizQuestion": 1 } }
+            { projection: { "quizQuestion.optionStats": 1 } }
         );
 
         if (!campaign) {
@@ -151,26 +145,29 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         }
 
         const quizQuestion = campaign.quizQuestion;
-        if (!quizQuestion) {
+        if (!quizQuestion || !quizQuestion.optionStats) {
             return res.status(400).json({ error: "No quiz question found for this campaign" });
         }
 
-        // Calculate total responses
-        const totalResponses = 
-            (quizQuestion.option1?.totalCount || 0) +
-            (quizQuestion.option2?.totalCount || 0) +
-            (quizQuestion.option3?.totalCount || 0) +
-            (quizQuestion.option4?.totalCount || 0);
+        const optionStats = quizQuestion.optionStats;
+        const totalResponses =
+            (optionStats.option1?.totalCount || 0) +
+            (optionStats.option2?.totalCount || 0) +
+            (optionStats.option3?.totalCount || 0) +
+            (optionStats.option4?.totalCount || 0);
 
-        // Update response count and demographic stats
+        if (![1, 2, 3, 4].includes(parseInt(questionResponse))) {
+            return res.status(400).json({ error: "Invalid question response (must be 1-4)" });
+        }
+
         const updateQuery = {
             $inc: {
-                [`quizQuestion.option${questionResponse}.totalCount`]: 1,
-                [`quizQuestion.demographicStats.ageGroups.${ageGroup}.${gender}`]: 1
+                [`quizQuestion.optionStats.option${questionResponse}.totalCount`]: 1,
+                [`quizQuestion.optionStats.option${questionResponse}.demographics.${ageGroup}.${gender}`]: 1
             }
         };
 
-        const result = await db.collection('compaigns').updateOne(
+        const result = await db.collection('campaigns').updateOne(
             { _id: new ObjectId(campaignId) },
             updateQuery
         );
@@ -179,27 +176,27 @@ exports.submitQuizQuestionResponse = async (req, res) => {
             return res.status(404).json({ error: "Campaign not found or update failed" });
         }
 
-        // Calculate percentage
-        const selectedOptionCount = quizQuestion[`option${questionResponse}`]?.totalCount || 0;
-        const percentage = totalResponses > 0 
+        const selectedOptionCount = optionStats[`option${questionResponse}`]?.totalCount || 0;
+        const percentage = totalResponses > 0
             ? Math.round(((selectedOptionCount + 1) / (totalResponses + 1)) * 100)
             : 100;
 
-        res.status(200).json({ 
+        res.status(200).json({
             message: "Question response recorded successfully",
-            percentage: `${percentage}% of people selected this option`
+            percentage: `${percentage}% of people selected this option`,
+            isCorrect: quizQuestion.answer === `option${questionResponse}`
         });
 
     } catch (error) {
         console.error("Error submitting quiz question response:", error);
-        
+
         if (error.message.includes('User not found')) {
             return res.status(404).json({ error: error.message });
         }
         if (error.message.includes('Invalid user ID format')) {
             return res.status(400).json({ error: error.message });
         }
-        
+
         res.status(500).json({ error: "Internal server error" });
     } finally {
         if (client) {
@@ -208,23 +205,27 @@ exports.submitQuizQuestionResponse = async (req, res) => {
     }
 };
 
-
 exports.submitSurveyQuestion1Response = async (req, res) => {
-    const { campaignId, surveyResponse } = req.body;
-    const userId = req.user._id;
+    const { userId,campaignId, surveyResponse } = req.body;
 
     if (!campaignId || !surveyResponse) {
         return res.status(400).json({ error: "Campaign ID and survey response are required" });
     }
 
+    if (!ObjectId.isValid(campaignId) || !ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: "Invalid ID format" });
+    }
+
     let client;
     try {
+        const { age, gender } = await getUserDemographics(userId);
+        const ageGroup = getAgeGroup(age);
+
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
 
-        // First, check if the campaign has survey question 1
-        const campaign = await db.collection('compaigns').findOne(
-            { _id: new MongoClient.ObjectId(campaignId) },
+        const campaign = await db.collection('campaigns').findOne(
+            { _id: new ObjectId(campaignId) },
             { projection: { "surveyQuestion1": 1 } }
         );
 
@@ -236,23 +237,26 @@ exports.submitSurveyQuestion1Response = async (req, res) => {
             return res.status(400).json({ error: "This campaign doesn't have survey question 1" });
         }
 
-        // Calculate total responses for percentage calculation
         const surveyQuestion = campaign.surveyQuestion1;
         const totalResponses =
-            (surveyQuestion.option1?.totalCount || 0) +
-            (surveyQuestion.option2?.totalCount || 0) +
-            (surveyQuestion.option3?.totalCount || 0) +
-            (surveyQuestion.option4?.totalCount || 0);
+            (surveyQuestion.optionStats?.option1?.totalCount || 0) +
+            (surveyQuestion.optionStats?.option2?.totalCount || 0) +
+            (surveyQuestion.optionStats?.option3?.totalCount || 0) +
+            (surveyQuestion.optionStats?.option4?.totalCount || 0);
 
-        // Update the survey response count
+        if (![1, 2, 3, 4].includes(parseInt(surveyResponse))) {
+            return res.status(400).json({ error: "Invalid survey response (must be 1-4)" });
+        }
+
         const updateQuery = {
             $inc: {
-                [`surveyQuestion1.option${surveyResponse}.totalCount`]: 1
+                [`surveyQuestion1.optionStats.option${surveyResponse}.totalCount`]: 1,
+                [`surveyQuestion1.optionStats.option${surveyResponse}.demographics.${ageGroup}.${gender}`]: 1
             }
         };
 
-        const result = await db.collection('compaigns').updateOne(
-            { _id: new MongoClient.ObjectId(campaignId) },
+        const result = await db.collection('campaigns').updateOne(
+            { _id: new ObjectId(campaignId) },
             updateQuery
         );
 
@@ -260,8 +264,7 @@ exports.submitSurveyQuestion1Response = async (req, res) => {
             return res.status(404).json({ error: "Campaign not found or update failed" });
         }
 
-        // Calculate percentage for the selected option
-        const selectedOptionCount = surveyQuestion[`option${surveyResponse}`]?.totalCount || 0;
+        const selectedOptionCount = surveyQuestion.optionStats?.[`option${surveyResponse}`]?.totalCount || 0;
         const percentage = totalResponses > 0
             ? Math.round(((selectedOptionCount + 1) / (totalResponses + 1)) * 100)
             : 100;
@@ -273,6 +276,14 @@ exports.submitSurveyQuestion1Response = async (req, res) => {
 
     } catch (error) {
         console.error("Error submitting survey question 1 response:", error);
+
+        if (error.message.includes('User not found')) {
+            return res.status(404).json({ error: error.message });
+        }
+        if (error.message.includes('Invalid user ID format')) {
+            return res.status(400).json({ error: error.message });
+        }
+
         res.status(500).json({ error: "Internal server error" });
     } finally {
         if (client) {
@@ -282,21 +293,26 @@ exports.submitSurveyQuestion1Response = async (req, res) => {
 };
 
 exports.submitSurveyQuestion2Response = async (req, res) => {
-    const { campaignId, surveyResponse } = req.body;
-    const userId = req.user._id;
+    const { userId,campaignId, surveyResponse } = req.body;
 
     if (!campaignId || !surveyResponse) {
         return res.status(400).json({ error: "Campaign ID and survey response are required" });
     }
 
+    if (!ObjectId.isValid(campaignId) || !ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: "Invalid ID format" });
+    }
+
     let client;
     try {
+        const { age, gender } = await getUserDemographics(userId);
+        const ageGroup = getAgeGroup(age);
+
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
 
-        // First, check if the campaign has survey question 2
         const campaign = await db.collection('compaigns').findOne(
-            { _id: new MongoClient.ObjectId(campaignId) },
+            { _id: new ObjectId(campaignId) },
             { projection: { "surveyQuestion2": 1 } }
         );
 
@@ -308,23 +324,26 @@ exports.submitSurveyQuestion2Response = async (req, res) => {
             return res.status(400).json({ error: "This campaign doesn't have survey question 2" });
         }
 
-        // Calculate total responses for percentage calculation
         const surveyQuestion = campaign.surveyQuestion2;
         const totalResponses =
-            (surveyQuestion.option1?.totalCount || 0) +
-            (surveyQuestion.option2?.totalCount || 0) +
-            (surveyQuestion.option3?.totalCount || 0) +
-            (surveyQuestion.option4?.totalCount || 0);
+            (surveyQuestion.optionStats?.option1?.totalCount || 0) +
+            (surveyQuestion.optionStats?.option2?.totalCount || 0) +
+            (surveyQuestion.optionStats?.option3?.totalCount || 0) +
+            (surveyQuestion.optionStats?.option4?.totalCount || 0);
 
-        // Update the survey response count
+        if (![1, 2, 3, 4].includes(parseInt(surveyResponse))) {
+            return res.status(400).json({ error: "Invalid survey response (must be 1-4)" });
+        }
+
         const updateQuery = {
             $inc: {
-                [`surveyQuestion2.option${surveyResponse}.totalCount`]: 1
+                [`surveyQuestion2.optionStats.option${surveyResponse}.totalCount`]: 1,
+                [`surveyQuestion2.optionStats.option${surveyResponse}.demographics.${ageGroup}.${gender}`]: 1
             }
         };
 
         const result = await db.collection('compaigns').updateOne(
-            { _id: new MongoClient.ObjectId(campaignId) },
+            { _id: new ObjectId(campaignId) },
             updateQuery
         );
 
@@ -332,8 +351,7 @@ exports.submitSurveyQuestion2Response = async (req, res) => {
             return res.status(404).json({ error: "Campaign not found or update failed" });
         }
 
-        // Calculate percentage for the selected option
-        const selectedOptionCount = surveyQuestion[`option${surveyResponse}`]?.totalCount || 0;
+        const selectedOptionCount = surveyQuestion.optionStats?.[`option${surveyResponse}`]?.totalCount || 0;
         const percentage = totalResponses > 0
             ? Math.round(((selectedOptionCount + 1) / (totalResponses + 1)) * 100)
             : 100;
@@ -345,6 +363,14 @@ exports.submitSurveyQuestion2Response = async (req, res) => {
 
     } catch (error) {
         console.error("Error submitting survey question 2 response:", error);
+
+        if (error.message.includes('User not found')) {
+            return res.status(404).json({ error: error.message });
+        }
+        if (error.message.includes('Invalid user ID format')) {
+            return res.status(400).json({ error: error.message });
+        }
+
         res.status(500).json({ error: "Internal server error" });
     } finally {
         if (client) {
