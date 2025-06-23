@@ -381,7 +381,7 @@ const signin = async (req, res) => {
          userId: user._id,
          token: token,
          otp: otp,
-         // user: safeUserData
+         user: safeUserData
       });
 
    } catch (error) {
