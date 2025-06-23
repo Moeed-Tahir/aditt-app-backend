@@ -17,7 +17,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
             return res.status(400).json({ error: "Please provide a valid gender (male or female)" });
         }
 
-        const totalCount = await db.collection('compaigns').countDocuments({ genderType: gender });
+        const totalCount = await db.collection('campaigns').countDocuments({ genderType: gender });
         const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage));
 
         if (pageNum > totalPages) {
@@ -78,7 +78,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
             }
         ];
 
-        let campaigns = await db.collection('compaigns')
+        let campaigns = await db.collection('campaigns')
             .aggregate(pipeline)
             .toArray();
 
@@ -91,7 +91,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
                 { $project: pipeline[4].$project }
             ];
 
-            const secondaryResults = await db.collection('compaigns')
+            const secondaryResults = await db.collection('campaigns')
                 .aggregate(secondaryPipeline)
                 .toArray();
 
