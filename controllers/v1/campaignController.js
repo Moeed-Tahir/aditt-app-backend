@@ -426,7 +426,7 @@ exports.recordCampaignClick = async (req, res) => {
 
         return res.status(200).json({ 
             message: 'Campaign engagement updated successfully',
-            data: updateResult
+            // data: updateResult
         });
 
     } catch (error) {
