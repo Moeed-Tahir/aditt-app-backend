@@ -5,8 +5,7 @@ const jwtMiddleware = require('../../middlewares/authMiddleware');
 
 router.post('/campaign/getAllSortedCampaigns', campaignController.getAllSortedCampaigns);
 router.post('/campaign/submitQuizQuestionResponse', campaignController.submitQuizQuestionResponse);
-router.post('/campaign/submitSurveyQuestion1Response', campaignController.submitSurveyQuestion1Response);
-router.post('/campaign/submitSurveyQuestion2Response', campaignController.submitSurveyQuestion2Response);
+router.post('/campaign/submitSurveyResponses', campaignController.submitSurveyResponses);
 
 
 module.exports = router;
