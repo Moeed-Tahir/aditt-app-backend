@@ -1,6 +1,9 @@
 const { MongoClient } = require('mongodb');
 const { getUserDemographics, getAgeGroup } = require('../../utils/userUtils');
 const { ObjectId } = require('mongodb');
+const dotenv = require("dotenv");
+dotenv.config();
+
 
 exports.getAllSortedCampaigns = async (req, res) => {
     let client;
@@ -319,6 +322,116 @@ exports.submitSurveyResponses = async (req, res) => {
         }
 
         res.status(500).json({ error: "Internal server error" });
+    } finally {
+        if (client) {
+            await client.close();
+        }
+    }
+};
+
+
+exports.userLinkClick = async (req, res) => {
+    let client;
+    try {
+        const { userId, campaignId } = req.body;
+
+        if (!userId || !campaignId) {
+            return res.status(400).json({ error: 'userId and campaignId are required' });
+        }
+
+        client = await MongoClient.connect(process.env.MONGO_URI);
+        const db = client.db();
+
+        if (!ObjectId.isValid(userId)) {
+            return res.status(400).json({ error: 'Invalid user ID format' });
+        }
+
+        const user = await db.collection('consumerusers').findOne(
+            { _id: new ObjectId(userId) }
+        );
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Validate campaign ID format
+        if (!ObjectId.isValid(campaignId)) {
+            return res.status(400).json({ error: 'Invalid campaign ID format' });
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Update campaign document
+        const updateResult = await db.collection('campaigns').findOneAndUpdate(
+            { _id: new ObjectId(campaignId) },
+            [
+                {
+                    $set: {
+                        'engagements.totalCount': { $add: ['$engagements.totalCount', 1] },
+                        'clickCount.totalCount': { $add: ['$clickCount.totalCount', 1] },
+                        'clickCount.dailyCounts': {
+                            $cond: [
+                                { 
+                                    $gt: [
+                                        {
+                                            $size: {
+                                                $filter: {
+                                                    input: '$clickCount.dailyCounts',
+                                                    as: 'daily',
+                                                    cond: { $eq: ['$$daily.date', today] }
+                                                }
+                                            }
+                                        },
+                                        0
+                                    ]
+                                },
+                                {
+                                    $map: {
+                                        input: '$clickCount.dailyCounts',
+                                        as: 'daily',
+                                        in: {
+                                            $cond: [
+                                                { $eq: ['$$daily.date', today] },
+                                                {
+                                                    date: '$$daily.date',
+                                                    count: { $add: ['$$daily.count', 1] }
+                                                },
+                                                '$$daily'
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    $concatArrays: [
+                                        '$clickCount.dailyCounts',
+                                        [{ date: today, count: 1 }]
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                }
+            ],
+            { 
+                returnDocument: 'after'
+            }
+        );
+
+        console.log("updateResult",updateResult);
+
+        if (!updateResult) {
+            return res.status(404).json({ error: 'Campaign not found' });
+        }
+
+        return res.status(200).json({ 
+            message: 'Campaign engagement updated successfully',
+            data: updateResult
+        });
+
+    } catch (error) {
+        console.error('Error in userLinkClick:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     } finally {
         if (client) {
             await client.close();

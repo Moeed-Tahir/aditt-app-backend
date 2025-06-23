@@ -1,6 +1,5 @@
-// utils/userUtils.js
 const { MongoClient } = require('mongodb');
-const { ObjectId } = require('mongodb'); // Import ObjectId directly
+const { ObjectId } = require('mongodb');
 
 async function getUserDemographics(userId) {
     let client;
@@ -10,12 +9,10 @@ async function getUserDemographics(userId) {
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
         
-        // Validate userId is a valid ObjectId
         if (!ObjectId.isValid(userId)) {
             throw new Error('Invalid user ID format');
         }
 
-        // Fetch user demographics
         const user = await db.collection('consumerusers').findOne(
             { _id: new ObjectId(userId) },
             { projection: { age: 1, gender: 1 } }
