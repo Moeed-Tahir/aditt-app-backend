@@ -230,8 +230,8 @@ exports.submitSurveyResponses = async (req, res) => {
 
     let client;
     try {
-        const { age, gender } = await getUserDemographics(userId);
-        const ageGroup = getAgeGroup(age);
+        // const { age, gender } = await getUserDemographics(userId);
+        // const ageGroup = getAgeGroup(age);
 
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
