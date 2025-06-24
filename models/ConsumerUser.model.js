@@ -15,13 +15,13 @@ const userSchema = new mongoose.Schema({
         required: true,
     },
     otpExpires: {
-        type: Date, 
+        type: Date,
     },
     dateOfBirth: {
         type: Date,
     },
     gender: {
-        type: String, 
+        type: String,
         enum: ['Male', 'Female', 'Other'],
     },
     zipCode: {
@@ -29,16 +29,33 @@ const userSchema = new mongoose.Schema({
     },
     isOtpVerified: {
         type: Boolean,
-        default: false 
+        default: false
     },
     isVerified: {
         type: Boolean,
         default: false
     },
-    stripeCustomerId:{
+    stripeCustomerId: {
         type: String,
         default: false
-    }
+    },
+    totalBalance: {
+        type: Number,
+        default: 0
+    },
+    totalWithdraw: {
+        type: Number,
+        default: 0
+    },
+    remainingBalance: {
+        type: Number,
+        default: 0
+    },
+    subscriptionPlan: {
+        type: String,
+        default: "Free",
+        enum:["Free","Premium"]
+    },
 });
 
 module.exports = mongoose.model('ConsumerUser', userSchema);

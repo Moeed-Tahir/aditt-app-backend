@@ -209,7 +209,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
 };
 
 exports.submitSurveyResponses = async (req, res) => {
-    const { userId, campaignId, surveyResponse1, surveyResponse2 } = req.body;
+    const { userId, campaignId, surveyResponse1, surveyResponse2, watchTime } = req.body;
 
     if (!campaignId || !userId) {
         return res.status(400).json({ error: "Campaign ID and user ID are required" });
@@ -219,8 +219,8 @@ exports.submitSurveyResponses = async (req, res) => {
         return res.status(400).json({ error: "Invalid ID format" });
     }
 
-    if (surveyResponse1 === undefined && surveyResponse2 === undefined) {
-        return res.status(400).json({ error: "At least one survey response is required" });
+    if (surveyResponse1 === undefined && surveyResponse2 === undefined && !watchTime) {
+        return res.status(400).json({ error: "At least one survey response or watch time is required" });
     }
 
     if (surveyResponse1 !== undefined && ![1, 2, 3, 4].includes(parseInt(surveyResponse1))) {
@@ -233,11 +233,20 @@ exports.submitSurveyResponses = async (req, res) => {
 
     let client;
     try {
-        const { age, gender } = await getUserDemographics(userId);
-        const ageGroup = getAgeGroup(age);
-
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
+
+        const user = await db.collection('consumerusers').findOne(
+            { _id: new ObjectId(userId) },
+            { projection: { subscriptionPlan: 1, totalBalance: 1, remainingBalance: 1 } }
+        );
+
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        const { age, gender } = await getUserDemographics(userId);
+        const ageGroup = getAgeGroup(age);
 
         const campaign = await db.collection('campaigns').findOne(
             { _id: new ObjectId(campaignId) },
@@ -251,7 +260,8 @@ exports.submitSurveyResponses = async (req, res) => {
         const updates = {};
         const response = {
             message: "Survey response(s) recorded successfully",
-            results: {}
+            results: {},
+            rewardDetails: {}
         };
 
         if (surveyResponse1 !== undefined) {
@@ -296,6 +306,51 @@ exports.submitSurveyResponses = async (req, res) => {
             response.results.surveyQuestion2 = {
                 percentage: `${percentage}% of people selected this option`
             };
+        }
+
+        if (watchTime) {
+            const watchTimeSeconds = parseInt(watchTime);
+            if (isNaN(watchTimeSeconds) || watchTimeSeconds <= 0) {
+                return res.status(400).json({ error: "Invalid watch time value" });
+            }
+
+            let earnedCents = 0;
+            const subscriptionPlan = user.subscriptionPlan || "Free";
+
+            if (subscriptionPlan === "Premium") {
+                earnedCents = Math.floor(watchTimeSeconds);
+            } else {
+                earnedCents = Math.floor(watchTimeSeconds / 3);
+            }
+
+            if (earnedCents > 0) {
+                const newTotalBalance = user.totalBalance + earnedCents;
+                const newRemainingBalance = user.remainingBalance + earnedCents;
+
+                await db.collection('consumerusers').updateOne(
+                    { _id: new ObjectId(userId) },
+                    {
+                        $inc: {
+                            totalBalance: earnedCents,
+                            remainingBalance: earnedCents
+                        }
+                    }
+                );
+
+                response.rewardDetails = {
+                    earnedCents,
+                    totalBalance: newTotalBalance,
+                    remainingBalance: newRemainingBalance,
+                    message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
+                };
+            } else {
+                response.rewardDetails = {
+                    earnedCents: 0,
+                    totalBalance: user.totalBalance,
+                    remainingBalance: user.remainingBalance,
+                    message: `Watch time of ${watchTimeSeconds} seconds didn't earn any cents yet (${subscriptionPlan} plan)`
+                };
+            }
         }
 
         if (Object.keys(updates).length > 0) {
@@ -354,7 +409,6 @@ exports.recordCampaignClick = async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        // Validate campaign ID format
         if (!ObjectId.isValid(campaignId)) {
             return res.status(400).json({ error: 'Invalid campaign ID format' });
         }
@@ -362,7 +416,6 @@ exports.recordCampaignClick = async (req, res) => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Update campaign document
         const updateResult = await db.collection('campaigns').findOneAndUpdate(
             { _id: new ObjectId(campaignId) },
             [
