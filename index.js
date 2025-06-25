@@ -29,7 +29,9 @@ const PORT = process.env.PORT || 3000;
         const campaignRoutes = require('./routes/v1/campaignRoute');
         app.use('/api', campaignRoutes);
 
-        // Error handling
+        const contactRoutes = require('./routes/v1/contactRoute');
+        app.use('/api', contactRoutes);
+
         app.use((err, req, res, next) => {
             console.error(err.stack);
             res.status(500).json({ error: "Internal Server Error" });

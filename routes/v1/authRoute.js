@@ -10,6 +10,7 @@ router.post('/signin/verify-signin-otp', authController.verifySigninOtp);
 router.post('/signin', authController.signin);
 router.post('/signup/personal-info', jwtMiddleware, authController.savePersonalInfo);
 router.post('/signup/verify-identity', jwtMiddleware, authController.initiateIdentityVerification);
+router.post('/user/updateProfile', jwtMiddleware, authController.updateProfile);
 router.get('/verification-success', authController.handleVerificationSuccess);
 
 module.exports = router;

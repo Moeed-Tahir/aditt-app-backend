@@ -2,6 +2,7 @@ const User = require('../../models/ConsumerUser.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const jwt = require("jsonwebtoken");
 const dotenv = require("dotenv");
+const mongoose = require("mongoose");
 
 dotenv.config();
 
@@ -103,7 +104,7 @@ const verifySignupOtp = async (req, res) => {
 
 const savePersonalInfo = async (req, res) => {
    try {
-      const { userId, dateOfBirth, gender, zipCode } = req.body;
+      const { userId, dateOfBirth, gender, zipCode,location,email } = req.body;
 
       if (!userId || !dateOfBirth || !gender || !zipCode) {
          return res.status(400).json({
@@ -123,6 +124,9 @@ const savePersonalInfo = async (req, res) => {
       user.dateOfBirth = new Date(dateOfBirth);
       user.gender = gender;
       user.zipCode = zipCode;
+      user.location = location;
+      user.email=email;
+
       await user.save();
 
       res.status(200).json({
@@ -454,5 +458,54 @@ const verifySigninOtp = async (req, res) => {
    }
 };
 
+const updateProfile = async (req, res) => {
+    try {
+        const { userId, name, email, dateOfBirth, gender, zipCode, location } = req.body;
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess }
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                message: 'User ID is required'
+            });
+        }
+
+        const updateData = {
+            ...(name && { name }),
+            ...(email && { email }),
+            ...(dateOfBirth && { dateOfBirth }),
+            ...(gender && { gender }),
+            ...(zipCode && { zipCode }),
+            ...(location && { location })
+        };
+
+        const updatedUser = await mongoose.model('ConsumerUser').findByIdAndUpdate(
+            userId, 
+            updateData,
+            { new: true } 
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Profile updated successfully',
+            user: updatedUser
+        });
+
+    } catch (error) {
+        console.error('Error updating profile:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error',
+            error: error.message
+        });
+    }
+};
+
+
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess,updateProfile }

@@ -10,6 +10,11 @@ const userSchema = new mongoose.Schema({
         required: true,
         unique: true
     },
+    email: { 
+        type: String,
+        unique: true,
+        sparse: true 
+    },
     otp: {
         type: String,
         required: true,
@@ -26,6 +31,10 @@ const userSchema = new mongoose.Schema({
     },
     zipCode: {
         type: String,
+    },
+    location: {  
+        type: String,
+        required:false
     },
     isOtpVerified: {
         type: Boolean,
