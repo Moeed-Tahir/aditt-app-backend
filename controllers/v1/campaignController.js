@@ -169,15 +169,23 @@ exports.submitQuizQuestionResponse = async (req, res) => {
 
     let client;
     try {
+        // Get user demographics
         const { age, gender } = await getUserDemographics(userId);
         const ageGroup = getAgeGroup(age);
+        
+        // Validate gender
+        const validGenders = ['male', 'female', 'other'];
+        if (!validGenders.includes(gender)) {
+            return res.status(400).json({ error: "Invalid gender value" });
+        }
 
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
 
+        // Get campaign with only necessary fields
         const campaign = await db.collection('campaigns').findOne(
             { _id: new ObjectId(campaignId) },
-            { projection: { "quizQuestion.optionStats": 1 } }
+            { projection: { "quizQuestion.optionStats": 1, "quizQuestion.answer": 1 } }
         );
 
         if (!campaign) {
@@ -190,16 +198,20 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         }
 
         const optionStats = quizQuestion.optionStats;
+        
+        // Calculate total responses before updating
         const totalResponses =
             (optionStats.option1?.totalCount || 0) +
             (optionStats.option2?.totalCount || 0) +
             (optionStats.option3?.totalCount || 0) +
             (optionStats.option4?.totalCount || 0);
 
+        // Validate question response
         if (![1, 2, 3, 4].includes(parseInt(questionResponse))) {
             return res.status(400).json({ error: "Invalid question response (must be 1-4)" });
         }
 
+        // Prepare the update query
         const updateQuery = {
             $inc: {
                 [`quizQuestion.optionStats.option${questionResponse}.totalCount`]: 1,
@@ -207,6 +219,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
             }
         };
 
+        // Update the campaign
         const result = await db.collection('campaigns').updateOne(
             { _id: new ObjectId(campaignId) },
             updateQuery
@@ -216,9 +229,10 @@ exports.submitQuizQuestionResponse = async (req, res) => {
             return res.status(404).json({ error: "Campaign not found or update failed" });
         }
 
-        const selectedOptionCount = optionStats[`option${questionResponse}`]?.totalCount || 0;
+        // Calculate the new percentage
+        const selectedOptionCount = (optionStats[`option${questionResponse}`]?.totalCount || 0) + 1;
         const percentage = totalResponses > 0
-            ? Math.round(((selectedOptionCount + 1) / (totalResponses + 1)) * 100)
+            ? Math.round((selectedOptionCount / (totalResponses + 1)) * 100)
             : 100;
 
         res.status(200).json({
@@ -244,6 +258,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         }
     }
 };
+
 exports.submitSurveyResponses = async (req, res) => {
     const { userId, campaignId, surveyResponse1, surveyResponse2, watchTime } = req.body;
 
