@@ -3,6 +3,8 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const jwt = require("jsonwebtoken");
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
+const { sendOTPViaMessage } = require('../../services/otpService.js');
+const { generateOTP, sendOTPViaEmail } = require('../../services/otpService.js');
 
 dotenv.config();
 
@@ -38,7 +40,7 @@ const initiateSignup = async (req, res) => {
          expiresIn: '7d'
       });
 
-      // await sendOtp(phone, otp);
+      await sendOTPViaMessage(phone, otp);
 
       res.status(200).json({
          success: true,
@@ -104,7 +106,7 @@ const verifySignupOtp = async (req, res) => {
 
 const savePersonalInfo = async (req, res) => {
    try {
-      const { userId, dateOfBirth, gender, zipCode,location,email } = req.body;
+      const { userId, dateOfBirth, gender, zipCode, location, email } = req.body;
 
       if (!userId || !dateOfBirth || !gender || !zipCode) {
          return res.status(400).json({
@@ -125,7 +127,7 @@ const savePersonalInfo = async (req, res) => {
       user.gender = gender;
       user.zipCode = zipCode;
       user.location = location;
-      user.email=email;
+      user.email = email;
 
       await user.save();
 
@@ -459,53 +461,186 @@ const verifySigninOtp = async (req, res) => {
 };
 
 const updateProfile = async (req, res) => {
-    try {
-        const { userId, name, email, dateOfBirth, gender, zipCode, location } = req.body;
+   try {
+      const { userId, name, email, dateOfBirth, gender, zipCode, location } = req.body;
 
-        if (!userId) {
-            return res.status(400).json({
-                success: false,
-                message: 'User ID is required'
-            });
-        }
-
-        const updateData = {
-            ...(name && { name }),
-            ...(email && { email }),
-            ...(dateOfBirth && { dateOfBirth }),
-            ...(gender && { gender }),
-            ...(zipCode && { zipCode }),
-            ...(location && { location })
-        };
-
-        const updatedUser = await mongoose.model('ConsumerUser').findByIdAndUpdate(
-            userId, 
-            updateData,
-            { new: true } 
-        );
-
-        if (!updatedUser) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
-        res.status(200).json({
-            success: true,
-            message: 'Profile updated successfully',
-            user: updatedUser
-        });
-
-    } catch (error) {
-        console.error('Error updating profile:', error);
-        res.status(500).json({
+      if (!userId) {
+         return res.status(400).json({
             success: false,
-            message: 'Internal server error',
-            error: error.message
-        });
-    }
+            message: 'User ID is required'
+         });
+      }
+
+      const updateData = {
+         ...(name && { name }),
+         ...(email && { email }),
+         ...(dateOfBirth && { dateOfBirth }),
+         ...(gender && { gender }),
+         ...(zipCode && { zipCode }),
+         ...(location && { location })
+      };
+
+      const updatedUser = await mongoose.model('ConsumerUser').findByIdAndUpdate(
+         userId,
+         updateData,
+         { new: true }
+      );
+
+      if (!updatedUser) {
+         return res.status(404).json({
+            success: false,
+            message: 'User not found'
+         });
+      }
+
+      res.status(200).json({
+         success: true,
+         message: 'Profile updated successfully',
+         user: updatedUser
+      });
+
+   } catch (error) {
+      console.error('Error updating profile:', error);
+      res.status(500).json({
+         success: false,
+         message: 'Internal server error',
+         error: error.message
+      });
+   }
+};
+
+//Verify Email===============================
+const verifyEmail = async (req, res) => {
+   try {
+      const { userId, email } = req.body;
+
+      // Check if the user already exists in the DummyUser collection
+      const existingUser = await User.findOne({ _id: userId, email });
+
+      if (existingUser) {
+         const otp = generateOTP();
+         console.log("otp", otp);
+         existingUser.otp = otp;
+         existingUser.otpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+         existingUser.isOtpVerified = false; // Reset OTP verification status
+         await existingUser.save();
+
+
+         await sendOTPViaEmail(email, otp);
+
+
+         const token = jwt.sign(
+            { userId: existingUser._id },
+            process.env.SECRET_KEY,
+            { expiresIn: '1h' }
+         );
+
+         res.status(200).json({
+            message: "OTP sent to your email",
+            requiresOtp: true,
+            email: email,
+            token: token,
+         });
+      }
+      else {
+         console.error("User not found");
+         return res.status(404).json({ message: "User not found" });
+      }
+
+   } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: "Internal Server Error" });
+   }
+};
+
+// Verify OTP===============================
+const verifyOTP = async (req, res) => {
+   try {
+      const { userId, otp } = req.body;
+
+      const user = await User.findOne({ _id: userId, otp, isOtpVerified: false });
+
+      if (!user) {
+         return res.status(400).json({
+            message: "Invalid or expired OTP",
+            requiresResend: true
+         });
+      }
+
+      if (user.otp !== otp) {
+         return res.status(400).json({
+            message: "Invalid OTP",
+            requiresResend: true
+         });
+      }
+
+      if (user.otpExpires < Date.now()) {
+         return res.status(400).json({
+            message: "OTP has expired",
+            requiresResend: true
+         });
+      }
+
+      user.isOtpVerified = true;
+      user.otp = null; // Clear OTP after verification
+      user.otpExpires = null; // Clear OTP expiration date
+      await user.save()
+
+      const token = jwt.sign(
+         { userId: user._id },
+         process.env.SECRET_KEY,
+         { expiresIn: '1h' }
+      );
+
+      const { password: _, ...userData } = user.toObject();
+      res.status(200).json({
+         message: "OTP verified successfully",
+         user: userData,
+         token: token,
+      });
+
+   } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: "Internal Server Error" });
+   }
+};
+
+//Resend OTP===============================
+const resendOTP = async (req, res) => {
+   try {
+      const { userId, email } = req.body;
+
+      const user = await User.findOne({ _id: userId, email });
+      if (!user) {
+         return res.status(400).json({
+            message: "User not found",
+            requiresResend: false
+         });
+      }
+
+      const otp = generateOTP();
+
+      user.otp = otp;
+      user.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
+      user.isOtpVerified = false;
+      await user.save();
+
+      await sendOTPViaEmail(email, otp);
+
+      res.status(200).json({
+         message: "New OTP sent to your email",
+         success: true,
+         email: email
+      });
+
+   } catch (error) {
+      console.error("Error in resendOTP:", error);
+      res.status(500).json({
+         message: "Internal Server Error",
+         success: false
+      });
+   }
 };
 
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess,updateProfile }
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP };
