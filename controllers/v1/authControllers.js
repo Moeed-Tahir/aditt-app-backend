@@ -509,7 +509,49 @@ const updateProfile = async (req, res) => {
    }
 };
 
-//Verify Email===============================
+const deleteUserProfile = async (req, res) => {
+   try {
+      const { userId } = req.body;
+
+      if (!userId) {
+         return res.status(400).json({
+            success: false,
+            message: 'User ID is required'
+         });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+         return res.status(400).json({
+            success: false,
+            message: 'Invalid User ID format'
+         });
+      }
+
+      const deletedUser = await User.findByIdAndDelete(userId);
+
+      if (!deletedUser) {
+         return res.status(404).json({
+            success: false,
+            message: 'User not found'
+         });
+      }
+
+      res.status(200).json({
+         success: true,
+         message: 'User deleted successfully',
+         user: deletedUser
+      });
+
+   } catch (error) {
+      console.error('Error deleting user:', error);
+      res.status(500).json({
+         success: false,
+         message: 'Internal server error',
+         error: error.message
+      });
+   }
+};
+
 const verifyEmail = async (req, res) => {
    try {
       const { userId, email } = req.body;
@@ -553,7 +595,6 @@ const verifyEmail = async (req, res) => {
    }
 };
 
-// Verify OTP===============================
 const verifyOTP = async (req, res) => {
    try {
       const { userId, otp } = req.body;
@@ -605,7 +646,6 @@ const verifyOTP = async (req, res) => {
    }
 };
 
-//Resend OTP===============================
 const resendOTP = async (req, res) => {
    try {
       const { userId, email } = req.body;
