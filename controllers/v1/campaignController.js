@@ -2,7 +2,8 @@ const { MongoClient } = require('mongodb');
 const { getUserDemographics, getAgeGroup } = require('../../utils/userUtils');
 const { ObjectId } = require('mongodb');
 const dotenv = require("dotenv");
-const VideoWatchUsers = require('../../models/VideoWatchUser.model');
+const UserCampaignView = require('../../models/UserCampaignView.model');
+const mongoose = require("mongoose");
 
 dotenv.config();
 exports.getAllSortedCampaigns = async (req, res) => {
@@ -22,30 +23,29 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
         const otherGender = gender === 'male' ? 'female' : 'male';
 
-        const watchedVideosLookup = {
+        const watchedCampaignsLookup = {
             $lookup: {
                 from: 'videowatchusers',
-                let: { campaignVideoUrl: "$campaignVideoUrl" },
+                let: { campaignId: { $toString: "$_id" } },
                 pipeline: [
                     {
                         $match: {
                             $expr: {
                                 $and: [
                                     { $eq: ["$userId", userId] },
-                                    { $eq: ["$videoUrl", "$$campaignVideoUrl"] }
+                                    { $eq: ["$campaignId", "$$campaignId"] }
                                 ]
                             }
                         }
                     }
                 ],
-                as: "watchedVideos"
+                as: "watchedStatus"
             }
         };
 
         const mainPipeline = [
             { $match: { genderType: gender } },
-            watchedVideosLookup,
-            { $match: { watchedVideos: { $size: 0 } } },
+            watchedCampaignsLookup,
             { $sort: { createdAt: -1 } },
             { $skip: (pageNum - 1) * itemsPerPage },
             { $limit: itemsPerPage },
@@ -57,6 +57,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
                     campaignVideo: '$campaignVideoUrl',
                     brandLogo: '$companyLogo',
                     gender: '$genderType',
+                    status: { $gt: [{ $size: "$watchedStatus" }, 0] }, 
                     questions: {
                         quizQuestion: {
                             $mergeObjects: [
@@ -93,8 +94,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
         const countPipeline = [
             { $match: { genderType: gender } },
-            watchedVideosLookup,
-            { $match: { watchedVideos: { $size: 0 } } },
+            watchedCampaignsLookup,
             { $count: "total" }
         ];
 
@@ -111,8 +111,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
             
             const secondaryPipeline = [
                 { $match: { genderType: otherGender } },
-                watchedVideosLookup,
-                { $match: { watchedVideos: { $size: 0 } } },
+                watchedCampaignsLookup,
                 { $sort: { createdAt: -1 } },
                 { $limit: remainingItems },
                 {
@@ -123,7 +122,8 @@ exports.getAllSortedCampaigns = async (req, res) => {
                         campaignVideo: '$campaignVideoUrl',
                         brandLogo: '$companyLogo',
                         gender: '$genderType',
-                        questions: mainPipeline[6].$project.questions
+                        status: { $gt: [{ $size: "$watchedStatus" }, 0] },
+                        questions: mainPipeline[5].$project.questions
                     }
                 }
             ];
@@ -171,7 +171,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
     try {
         const { age, gender } = await getUserDemographics(userId);
         const ageGroup = getAgeGroup(age);
-        
+
         const validGenders = ['male', 'female', 'other'];
         if (!validGenders.includes(gender)) {
             return res.status(400).json({ error: "Invalid gender value" });
@@ -195,7 +195,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         }
 
         const optionStats = quizQuestion.optionStats;
-        
+
         const totalResponses =
             (optionStats.option1?.totalCount || 0) +
             (optionStats.option2?.totalCount || 0) +
@@ -221,6 +221,13 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         if (result.modifiedCount === 0) {
             return res.status(404).json({ error: "Campaign not found or update failed" });
         }
+
+        const videoWatchEntry = new UserCampaignView({
+            userId: new mongoose.Types.ObjectId(userId),
+            campaignId: new mongoose.Types.ObjectId(campaignId)
+        });
+
+        await videoWatchEntry.save();
 
         const selectedOptionCount = (optionStats[`option${questionResponse}`]?.totalCount || 0) + 1;
         const percentage = totalResponses > 0
@@ -288,7 +295,7 @@ exports.submitSurveyResponses = async (req, res) => {
                 { _id: new ObjectId(campaignId) },
                 { projection: { surveyQuestion1: 1, surveyQuestion2: 1, campaignVideoUrl: 1 } }
             ),
-            getUserDemographics(userId).catch(() => ({})) 
+            getUserDemographics(userId).catch(() => ({}))
         ]);
 
         if (!user) {
@@ -371,7 +378,7 @@ exports.submitSurveyResponses = async (req, res) => {
             }
 
             const subscriptionPlan = user.subscriptionPlan || "Free";
-            earnedCents = subscriptionPlan === "Premium" 
+            earnedCents = subscriptionPlan === "Premium"
                 ? Math.floor(watchTimeSeconds)
                 : Math.floor(watchTimeSeconds / 3);
 
@@ -416,7 +423,7 @@ exports.submitSurveyResponses = async (req, res) => {
         if (updatePromises.length > 0) {
             const results = await Promise.all(updatePromises);
             const campaignUpdateResult = results.find(r => r?.modifiedCount !== undefined);
-            
+
             if (campaignUpdateResult && campaignUpdateResult.modifiedCount === 0) {
                 return res.status(404).json({ error: "Campaign update failed" });
             }
@@ -482,7 +489,7 @@ exports.recordCampaignClick = async (req, res) => {
                         'clickCount.totalCount': { $add: ['$clickCount.totalCount', 1] },
                         'clickCount.dailyCounts': {
                             $cond: [
-                                { 
+                                {
                                     $gt: [
                                         {
                                             $size: {
@@ -523,18 +530,18 @@ exports.recordCampaignClick = async (req, res) => {
                     }
                 }
             ],
-            { 
+            {
                 returnDocument: 'after'
             }
         );
 
-        console.log("updateResult",updateResult);
+        console.log("updateResult", updateResult);
 
         if (!updateResult) {
             return res.status(404).json({ error: 'Campaign not found' });
         }
 
-        return res.status(200).json({ 
+        return res.status(200).json({
             message: 'Campaign engagement updated successfully',
             // data: updateResult
         });

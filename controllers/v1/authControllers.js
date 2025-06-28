@@ -683,4 +683,4 @@ const resendOTP = async (req, res) => {
 };
 
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP };
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP,deleteUserProfile };

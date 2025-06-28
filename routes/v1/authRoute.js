@@ -13,7 +13,6 @@ router.post('/signup/verify-identity', jwtMiddleware, authController.initiateIde
 router.post('/user/updateProfile', jwtMiddleware, authController.updateProfile);
 router.get('/verification-success', authController.handleVerificationSuccess);
 router.post('/deleteUserProfile', authController.deleteUserProfile);
-
 router.post("/verify-email", jwtMiddleware, authController.verifyEmail);
 router.post("/verify-otp", jwtMiddleware, authController.verifyOTP);
 router.post("/resend-otp", jwtMiddleware, authController.resendOTP);
