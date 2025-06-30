@@ -46,7 +46,7 @@ const userSchema = new mongoose.Schema({
     },
     stripeCustomerId: {
         type: String,
-        default: false
+        default: null
     },
     totalBalance: {
         type: Number,
