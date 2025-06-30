@@ -126,4 +126,4 @@ const createSubscription = async (req, res) => {
   }
 };
 
-module.exports = {createSubscription}
+module.exports = {createSubscription,createSetupIntent}
