@@ -23,7 +23,7 @@ const setupStripePaymentSheet = async (req, res) => {
                 phone: user.phone,
                 metadata: {
                     userId: userId.toString(),
-                    app: 'YourAppName'
+                    app: 'AdditApp'
                 }
             });
             
