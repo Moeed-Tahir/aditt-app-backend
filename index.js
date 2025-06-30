@@ -32,6 +32,9 @@ const PORT = process.env.PORT || 3000;
         const contactRoutes = require('./routes/v1/contactRoute');
         app.use('/api', contactRoutes);
 
+        const subscriptionRoutes = require('./routes/v1/subscriptionRoute');
+        app.use('/api', subscriptionRoutes);
+
         app.use((err, req, res, next) => {
             console.error(err.stack);
             res.status(500).json({ error: "Internal Server Error" });
