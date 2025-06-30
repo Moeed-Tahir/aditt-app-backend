@@ -2,6 +2,29 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const ConsumerUser = require('../../models/ConsumerUser.model');
 const Subscription = require('../../models/Subscription.model');
 
+const createSetupIntent = async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    const user = await ConsumerUser.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const setupIntent = await stripe.setupIntents.create({
+      customer: user.stripeCustomerId,
+      payment_method_types: ['card'], 
+    });
+
+    res.json({
+      setupIntentId: setupIntent.id,
+      clientSecret: setupIntent.client_secret,
+    });
+  } catch (error) {
+    console.error('Error creating SetupIntent:', error);
+    res.status(500).json({ error: 'Failed to create SetupIntent' });
+  }
+};
 
 const createSubscription = async (req, res) => {
   try {
