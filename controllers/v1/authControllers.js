@@ -214,21 +214,39 @@ const initiateIdentityVerification = async (req, res) => {
          });
       }
 
-      // phone = phone.replace(/^\+/, '');
-
-      // const customers = await stripe.customers.search({
-      //    query: `phone:'${phone}'`,
-      //    limit: 1
-      // });
-
-      // if (customers.data.length === 0) {
-      //    return res.status(404).json({
-      //       success: false,
-      //       message: 'No Stripe customer account found for this phone number'
-      //    });
-      // }
-
-      // const customer = customers.data[0];
+      let stripeCustomer;
+      if (user.stripeCustomerId) {
+         try {
+            stripeCustomer = await stripe.customers.retrieve(user.stripeCustomerId);
+         } catch (error) {
+            if (error.code === 'resource_missing') {
+               stripeCustomer = await stripe.customers.create({
+                  name: user.name,
+                  phone: user.phone,
+                  email: user.email,
+                  metadata: {
+                     userId: user._id.toString()
+                  }
+               });
+               user.stripeCustomerId = stripeCustomer.id;
+               await user.save();
+            } else {
+               throw error;
+            }
+         }
+      } else {
+         stripeCustomer = await stripe.customers.create({
+            name: user.name,
+            phone: user.phone,
+            email: user.email,
+            metadata: {
+               userId: user._id.toString()
+            }
+         });
+         
+         user.stripeCustomerId = stripeCustomer.id;
+         await user.save();
+      }
 
       const session = await stripe.identity.verificationSessions.create({
          type: 'document',
@@ -241,14 +259,11 @@ const initiateIdentityVerification = async (req, res) => {
                require_id_number: false,
                allowed_types: ['driving_license', 'passport', 'id_card'],
                require_id_number: true,
-               // Add these if you need more control
                require_live_capture: true,
-               require_matching_selfie: true // Set to true if you need selfie matching
+               require_matching_selfie: true
             }
          }
       });
-
-
 
       res.status(200).json({
          success: true,
