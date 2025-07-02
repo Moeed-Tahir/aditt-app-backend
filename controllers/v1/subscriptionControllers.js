@@ -8,6 +8,15 @@ exports.createPlan = async (req, res) => {
   try {
     const { name, amount, interval } = req.body;
 
+    const validIntervals = ['month', 'year', 'week', 'day'];
+    if (!validIntervals.includes(interval)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid interval',
+        error: 'Recurring interval must be one of: month, year, week, or day'
+      });
+    }
+
     const product = await stripe.products.create({ name });
     const price = await stripe.prices.create({
       product: product.id,
@@ -104,7 +113,7 @@ exports.createCustomerAndSetupIntent = async (req, res) => {
       status: "success",
       clientSecret: setupIntent.client_secret,
       customerId,
-      setupIntentID:setupIntent.id
+      setupIntentID: setupIntent.id
     });
   } catch (error) {
     res.status(500).json({

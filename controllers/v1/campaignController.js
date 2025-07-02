@@ -17,11 +17,11 @@ exports.getAllSortedCampaigns = async (req, res) => {
         const itemsPerPage = 10;
         const pageNum = Math.max(1, parseInt(page));
 
-        if (!gender || !['male', 'female'].includes(gender)) {
+        if (!gender || !['Male', 'Female'].includes(gender)) {
             return res.status(400).json({ error: "Please provide a valid gender (male or female)" });
         }
 
-        const otherGender = gender === 'male' ? 'female' : 'male';
+        const otherGender = gender === 'Male' ? 'Female' : 'Male';
 
         const watchedCampaignsLookup = {
             $lookup: {
