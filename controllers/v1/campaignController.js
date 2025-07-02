@@ -57,7 +57,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
                     campaignVideo: '$campaignVideoUrl',
                     brandLogo: '$companyLogo',
                     gender: '$genderType',
-                    status: { $gt: [{ $size: "$watchedStatus" }, 0] }, 
+                    status: { $gt: [{ $size: "$watchedStatus" }, 0] },
                     questions: {
                         quizQuestion: {
                             $mergeObjects: [
@@ -108,7 +108,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
         if (campaigns.length < itemsPerPage && totalPages <= pageNum) {
             const remainingItems = itemsPerPage - campaigns.length;
-            
+
             const secondaryPipeline = [
                 { $match: { genderType: otherGender } },
                 watchedCampaignsLookup,
@@ -143,9 +143,9 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
     } catch (error) {
         console.error("Error fetching campaigns:", error);
-        res.status(500).json({ 
+        res.status(500).json({
             error: "Internal server error",
-            details: error.message 
+            details: error.message
         });
     } finally {
         if (client) {
@@ -155,7 +155,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
 };
 
 exports.submitQuizQuestionResponse = async (req, res) => {
-    const { campaignId, questionResponse, userId } = req.body;
+    const { campaignId, questionResponse, userId, watchTime } = req.body;
 
     if (!campaignId || !questionResponse || !userId) {
         return res.status(400).json({
@@ -172,7 +172,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         const { age, gender } = await getUserDemographics(userId);
         const ageGroup = getAgeGroup(age);
 
-        const validGenders = ['male', 'female', 'other'];
+        const validGenders = ['male', 'female', 'other', "Male", "Female"];
         if (!validGenders.includes(gender)) {
             return res.status(400).json({ error: "Invalid gender value" });
         }
@@ -180,13 +180,24 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
 
-        const campaign = await db.collection('campaigns').findOne(
-            { _id: new ObjectId(campaignId) },
-            { projection: { "quizQuestion.optionStats": 1, "quizQuestion.answer": 1 } }
-        );
+        const [campaign, user] = await Promise.all([
+            db.collection('campaigns').findOne(
+                { _id: new ObjectId(campaignId) },
+                {
+                    projection: { "quizQuestion.optionStats": 1, "quizQuestion.answer": 1, campaignVideoUrl: 1 }
+                }),
+            db.collection('consumerusers').findOne(
+                { _id: new ObjectId(userId) },
+                { projection: { subscriptionPlan: 1, totalBalance: 1, remainingBalance: 1 } }
+            )
+        ]);
 
         if (!campaign) {
             return res.status(404).json({ error: "Campaign not found" });
+        }
+
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
         }
 
         const quizQuestion = campaign.quizQuestion;
@@ -213,21 +224,72 @@ exports.submitQuizQuestionResponse = async (req, res) => {
             }
         };
 
-        const result = await db.collection('campaigns').updateOne(
-            { _id: new ObjectId(campaignId) },
-            updateQuery
-        );
+        const updatePromises = [
+            db.collection('campaigns').updateOne(
+                { _id: new ObjectId(campaignId) },
+                updateQuery
+            ),
+            UserCampaignView.create({
+                userId: new mongoose.Types.ObjectId(userId),
+                campaignId: new mongoose.Types.ObjectId(campaignId)
+            })
+        ];
 
-        if (result.modifiedCount === 0) {
-            return res.status(404).json({ error: "Campaign not found or update failed" });
+        let rewardDetails = null;
+        if (watchTime) {
+            const watchTimeSeconds = parseInt(watchTime);
+            if (isNaN(watchTimeSeconds) || watchTimeSeconds <= 0) {
+                return res.status(400).json({ error: "Invalid watch time value" });
+            }
+
+            const subscriptionPlan = user.subscriptionPlan || "Free";
+
+            let earnedCents = 0;
+
+            if (subscriptionPlan === "Premium") {
+                earnedCents = Math.floor(watchTimeSeconds * 3);
+            } else if (subscriptionPlan === "Free") {
+                earnedCents = Math.floor(watchTimeSeconds * 1);
+            }
+
+            if (earnedCents > 0) {
+                updatePromises.push(
+                    db.collection('consumerusers').updateOne(
+                        { _id: new ObjectId(userId) },
+                        {
+                            $inc: {
+                                totalBalance: earnedCents,
+                                remainingBalance: earnedCents
+                            }
+                        }
+                    )
+                );
+            }
+
+            if (campaign.campaignVideoUrl) {
+                updatePromises.push(
+                    db.collection('videowatchusers').updateOne(
+                        { userId, videoUrl: campaign.campaignVideoUrl },
+                        { $set: { userId, videoUrl: campaign.campaignVideoUrl } },
+                        { upsert: true }
+                    )
+                );
+            }
+
+            rewardDetails = {
+                earnedCents,
+                totalBalance: user.totalBalance + earnedCents,
+                remainingBalance: user.remainingBalance + earnedCents,
+                message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
+            };
         }
 
-        const videoWatchEntry = new UserCampaignView({
-            userId: new mongoose.Types.ObjectId(userId),
-            campaignId: new mongoose.Types.ObjectId(campaignId)
-        });
 
-        await videoWatchEntry.save();
+        const [campaignUpdateResult] = await Promise.all(updatePromises);
+
+        if (campaignUpdateResult.modifiedCount === 0) {
+            return res.status(404).json({ error: "Campaign not found or update failed" });
+        }
 
         const selectedOptionCount = (optionStats[`option${questionResponse}`]?.totalCount || 0) + 1;
         const percentage = totalResponses > 0
@@ -237,7 +299,8 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         res.status(200).json({
             message: "Question response recorded successfully",
             percentage: `${percentage}% of people selected this option`,
-            isCorrect: quizQuestion.answer === `option${questionResponse}`
+            isCorrect: quizQuestion.answer === `option${questionResponse}`,
+            rewardDetails
         });
 
     } catch (error) {
@@ -258,8 +321,9 @@ exports.submitQuizQuestionResponse = async (req, res) => {
     }
 };
 
+
 exports.submitSurveyResponses = async (req, res) => {
-    const { userId, campaignId, surveyResponse1, surveyResponse2, watchTime } = req.body;
+    const { userId, campaignId, surveyResponse1, surveyResponse2 } = req.body;
 
     if (!campaignId || !userId) {
         return res.status(400).json({ error: "Campaign ID and user ID are required" });
@@ -269,8 +333,8 @@ exports.submitSurveyResponses = async (req, res) => {
         return res.status(400).json({ error: "Invalid ID format" });
     }
 
-    if (surveyResponse1 === undefined && surveyResponse2 === undefined && !watchTime) {
-        return res.status(400).json({ error: "At least one survey response or watch time is required" });
+    if (surveyResponse1 === undefined && surveyResponse2 === undefined) {
+        return res.status(400).json({ error: "At least one survey response is required" });
     }
 
     if (surveyResponse1 !== undefined && ![1, 2, 3, 4].includes(parseInt(surveyResponse1))) {
@@ -286,45 +350,21 @@ exports.submitSurveyResponses = async (req, res) => {
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
 
-        const [user, campaign, demographics] = await Promise.all([
-            db.collection('consumerusers').findOne(
-                { _id: new ObjectId(userId) },
-                { projection: { subscriptionPlan: 1, totalBalance: 1, remainingBalance: 1 } }
-            ),
-            db.collection('campaigns').findOne(
-                { _id: new ObjectId(campaignId) },
-                { projection: { surveyQuestion1: 1, surveyQuestion2: 1, campaignVideoUrl: 1 } }
-            ),
-            getUserDemographics(userId).catch(() => ({}))
-        ]);
+        const campaign = await db.collection('campaigns').findOne(
+            { _id: new ObjectId(campaignId) },
+            { projection: { surveyQuestion1: 1, surveyQuestion2: 1 } }
+        );
 
-        if (!user) {
-            return res.status(404).json({ error: "User not found" });
-        }
         if (!campaign) {
             return res.status(404).json({ error: "Campaign not found" });
         }
 
         const response = {
             message: "Survey response(s) recorded successfully",
-            results: {},
-            rewardDetails: {}
+            results: {}
         };
 
-        const updatePromises = [];
         const updates = {};
-
-        if ((surveyResponse1 !== undefined || surveyResponse2 !== undefined) && campaign.campaignVideoUrl) {
-            try {
-                await db.collection('videowatchusers').updateOne(
-                    { userId: userId, videoUrl: campaign.campaignVideoUrl },
-                    { $set: { userId: userId, videoUrl: campaign.campaignVideoUrl } },
-                    { upsert: true }
-                );
-            } catch (error) {
-                console.error("Error saving video watch record:", error);
-            }
-        }
 
         if (surveyResponse1 !== undefined) {
             if (!campaign.surveyQuestion1) {
@@ -370,61 +410,13 @@ exports.submitSurveyResponses = async (req, res) => {
             };
         }
 
-        let earnedCents = 0;
-        if (watchTime) {
-            const watchTimeSeconds = parseInt(watchTime);
-            if (isNaN(watchTimeSeconds) || watchTimeSeconds <= 0) {
-                return res.status(400).json({ error: "Invalid watch time value" });
-            }
-
-            const subscriptionPlan = user.subscriptionPlan || "Free";
-            earnedCents = subscriptionPlan === "Premium"
-                ? Math.floor(watchTimeSeconds)
-                : Math.floor(watchTimeSeconds / 3);
-
-            if (earnedCents > 0) {
-                updatePromises.push(
-                    db.collection('consumerusers').updateOne(
-                        { _id: new ObjectId(userId) },
-                        {
-                            $inc: {
-                                totalBalance: earnedCents,
-                                remainingBalance: earnedCents
-                            }
-                        }
-                    )
-                );
-
-                response.rewardDetails = {
-                    earnedCents,
-                    totalBalance: user.totalBalance + earnedCents,
-                    remainingBalance: user.remainingBalance + earnedCents,
-                    message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
-                };
-            } else {
-                response.rewardDetails = {
-                    earnedCents: 0,
-                    totalBalance: user.totalBalance,
-                    remainingBalance: user.remainingBalance,
-                    message: `Watch time of ${watchTimeSeconds} seconds didn't earn any cents yet (${subscriptionPlan} plan)`
-                };
-            }
-        }
-
         if (Object.keys(updates).length > 0) {
-            updatePromises.push(
-                db.collection('campaigns').updateOne(
-                    { _id: new ObjectId(campaignId) },
-                    updates
-                )
+            const result = await db.collection('campaigns').updateOne(
+                { _id: new ObjectId(campaignId) },
+                updates
             );
-        }
 
-        if (updatePromises.length > 0) {
-            const results = await Promise.all(updatePromises);
-            const campaignUpdateResult = results.find(r => r?.modifiedCount !== undefined);
-
-            if (campaignUpdateResult && campaignUpdateResult.modifiedCount === 0) {
+            if (result.modifiedCount === 0) {
                 return res.status(404).json({ error: "Campaign update failed" });
             }
         }
@@ -448,6 +440,7 @@ exports.submitSurveyResponses = async (req, res) => {
         }
     }
 };
+
 
 exports.recordCampaignClick = async (req, res) => {
     let client;
