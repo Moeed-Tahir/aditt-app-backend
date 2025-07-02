@@ -8,6 +8,15 @@ exports.createPlan = async (req, res) => {
   try {
     const { name, amount, interval } = req.body;
 
+    const validIntervals = ['month', 'year', 'week', 'day'];
+    if (!validIntervals.includes(interval)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid interval',
+        error: 'Recurring interval must be one of: month, year, week, or day'
+      });
+    }
+
     const product = await stripe.products.create({ name });
     const price = await stripe.prices.create({
       product: product.id,
@@ -104,7 +113,7 @@ exports.createCustomerAndSetupIntent = async (req, res) => {
       status: "success",
       clientSecret: setupIntent.client_secret,
       customerId,
-      setupIntentID:setupIntent.id
+      setupIntentID: setupIntent.id
     });
   } catch (error) {
     res.status(500).json({
@@ -216,4 +225,112 @@ exports.manualTriggerSubscriptionCheck = async (req, res) => {
   }
 };
 
+exports.payout = async (req, res) => {
+  try {
+    const { userId, amount } = req.body;
 
+    if (!userId || !amount) {
+      return res.status(400).json({
+        status: "failed",
+        message: "Missing required fields: userId and amount",
+      });
+    }
+
+    const user = await ConsumerUser.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        status: "failed",
+        message: "User not found"
+      });
+    }
+
+    if (!user.stripeCustomerId) {
+      return res.status(400).json({
+        status: "failed",
+        message: "User doesn't have a Stripe customer account"
+      });
+    }
+
+    const setupIntent = await stripe.setupIntents.create({
+      customer: user.stripeCustomerId,
+      payment_method_types: ['us_bank_account'],
+      payment_method_options: {
+        us_bank_account: {
+          financial_connections: {
+            permissions: ['payment_method', 'balances'],
+          },
+        },
+      },
+    });
+
+    res.status(200).json({
+      status: "success",
+      clientSecret: setupIntent.client_secret,
+      setupIntentId: setupIntent.id,
+      message: "SetupIntent created for collecting bank details"
+    });
+
+  } catch (error) {
+    console.error("Error in payout:", error);
+    res.status(500).json({
+      status: "failed",
+      message: error.message
+    });
+  }
+};
+
+exports.confirmPayout = async (req, res) => {
+  try {
+    const { userId, setupIntentId, amount, currency = 'usd', description } = req.body;
+
+    if (!userId || !setupIntentId || !amount) {
+      return res.status(400).json({
+        status: "failed",
+        message: "Missing required fields: userId, setupIntentId, and amount",
+      });
+    }
+
+    const user = await ConsumerUser.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        status: "failed",
+        message: "User not found"
+      });
+    }
+
+    const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+    const paymentMethodId = setupIntent.payment_method;
+
+    if (!paymentMethodId) {
+      return res.status(400).json({
+        status: "failed",
+        message: "No payment method attached to this SetupIntent",
+      });
+    }
+
+    const payout = await stripe.payouts.create({
+      amount: Math.round(amount * 100),
+      currency: currency.toLowerCase(),
+      method: 'instant',
+      destination: paymentMethodId,
+      description: description || `Payout to ${user.name}`,
+    });
+
+    res.status(200).json({
+      status: "success",
+      payoutId: payout.id,
+      amount: payout.amount / 100,
+      currency: payout.currency,
+      arrivalDate: payout.arrival_date,
+      status: payout.status,
+      message: "Payout initiated successfully"
+    });
+
+  } catch (error) {
+    console.error("Error in confirmPayout:", error);
+    res.status(500).json({
+      status: "failed",
+      message: error.message
+    });
+  }
+};
