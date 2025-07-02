@@ -27,7 +27,6 @@ const initiateSignup = async (req, res) => {
          });
       }
 
-      // const otp = Math.floor(1000 + Math.random() * 9000).toString();
       const otp = 5555;
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -40,7 +39,7 @@ const initiateSignup = async (req, res) => {
          expiresIn: '7d'
       });
 
-      await sendOTPViaMessage(phone, otp);
+      // await sendOTPViaMessage(phone, otp);
 
       res.status(200).json({
          success: true,

@@ -321,7 +321,6 @@ exports.submitQuizQuestionResponse = async (req, res) => {
     }
 };
 
-
 exports.submitSurveyResponses = async (req, res) => {
     const { userId, campaignId, surveyResponse1, surveyResponse2 } = req.body;
 
