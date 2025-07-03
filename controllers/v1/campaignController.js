@@ -5,6 +5,8 @@ const dotenv = require("dotenv");
 const UserCampaignView = require('../../models/UserCampaignView.model');
 const mongoose = require("mongoose");
 const TransactionHistory = require('../../models/TransactionHistory.model');
+const moment = require("moment");
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 dotenv.config();
 exports.getAllSortedCampaigns = async (req, res) => {
@@ -460,7 +462,6 @@ exports.submitSurveyResponses = async (req, res) => {
     }
 };
 
-
 exports.recordCampaignClick = async (req, res) => {
     let client;
     try {
@@ -477,10 +478,7 @@ exports.recordCampaignClick = async (req, res) => {
             return res.status(400).json({ error: 'Invalid user ID format' });
         }
 
-        const user = await db.collection('consumerusers').findOne(
-            { _id: new ObjectId(userId) }
-        );
-
+        const user = await db.collection('consumerusers').findOne({ _id: new ObjectId(userId) });
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
@@ -499,6 +497,46 @@ exports.recordCampaignClick = async (req, res) => {
                     $set: {
                         'engagements.totalCount': { $add: ['$engagements.totalCount', 1] },
                         'clickCount.totalCount': { $add: ['$clickCount.totalCount', 1] },
+                        'engagements.dailyCounts': {
+                            $cond: [
+                                {
+                                    $gt: [
+                                        {
+                                            $size: {
+                                                $filter: {
+                                                    input: '$engagements.dailyCounts',
+                                                    as: 'daily',
+                                                    cond: { $eq: ['$$daily.date', today] }
+                                                }
+                                            }
+                                        },
+                                        0
+                                    ]
+                                },
+                                {
+                                    $map: {
+                                        input: '$engagements.dailyCounts',
+                                        as: 'daily',
+                                        in: {
+                                            $cond: [
+                                                { $eq: ['$$daily.date', today] },
+                                                {
+                                                    date: '$$daily.date',
+                                                    count: { $add: ['$$daily.count', 1] }
+                                                },
+                                                '$$daily'
+                                            ]
+                                        }
+                                    }
+                                },
+                                {
+                                    $concatArrays: [
+                                        '$engagements.dailyCounts',
+                                        [{ date: today, count: 1 }]
+                                    ]
+                                }
+                            ]
+                        },
                         'clickCount.dailyCounts': {
                             $cond: [
                                 {
@@ -542,16 +580,8 @@ exports.recordCampaignClick = async (req, res) => {
                     }
                 }
             ],
-            {
-                returnDocument: 'after'
-            }
+            { returnDocument: 'after' }
         );
-
-        console.log("updateResult", updateResult);
-
-        if (!updateResult) {
-            return res.status(404).json({ error: 'Campaign not found' });
-        }
 
         return res.status(200).json({
             message: 'Campaign engagement updated successfully',
@@ -567,3 +597,87 @@ exports.recordCampaignClick = async (req, res) => {
         }
     }
 };
+
+
+
+exports.paymentDeduct = async (req, res) => {
+  let client;
+  try {
+    client = await MongoClient.connect(process.env.MONGO_URI);
+    const db = client.db();
+
+    const campaign = await db.collection('campaigns').findOne({
+      status: 'Active',
+    });
+
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: 'Campaign not found or not active' });
+    }
+
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const todayEngagement = campaign.engagements?.dailyCounts?.find(item => {
+      const itemDate = new Date(item.date).toISOString().slice(0, 10);
+      return itemDate === todayDate;
+    });
+
+    const engagementsToday = todayEngagement?.count || 0;
+
+    if (engagementsToday <= 0) {
+      return res.json({
+        success: true,
+        message: 'No engagements to charge for today',
+        campaignId: campaign._id,
+        engagementsToday: 0,
+      });
+    }
+
+    if (campaign.campaignBudget < engagementsToday) {
+      return res.status(400).json({
+        success: false,
+        message: 'Insufficient campaign budget',
+        requiredAmount: engagementsToday,
+        remainingBudget: campaign.campaignBudget,
+      });
+    }
+
+    const charge = await stripe.charges.create({
+      amount: engagementsToday * 100,
+      currency: 'usd',
+      source: 'tok_visa',
+      description: `Charge for ${engagementsToday} engagements on ${campaign.campaignTitle}`,
+      metadata: {
+        campaignId: campaign._id.toString(),
+        userId: campaign.userId,
+      },
+    });
+
+    await db.collection('campaigns').updateOne(
+      { _id: campaign._id },
+      {
+        $inc: { campaignBudget: -engagementsToday },
+        $push: {
+          paymentHistory: {
+            date: new Date(),
+            amount: engagementsToday,
+            status: 'success',
+            stripeChargeId: charge.id,
+          },
+        },
+      }
+    );
+
+    res.json({
+      success: true,
+      message: 'Payment processed successfully',
+      chargeId: charge.id,
+      remainingBudget: campaign.campaignBudget - engagementsToday,
+    });
+
+  } catch (error) {
+    console.error('Payment error:', error);
+    res.status(500).json({ success: false, message: 'Payment failed', error: error.message });
+  } finally {
+    if (client) client.close();
+  }
+};
+
