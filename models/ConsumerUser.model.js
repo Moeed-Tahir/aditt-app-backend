@@ -64,6 +64,11 @@ const userSchema = new mongoose.Schema({
         default: "Free",
         enum:["Free","Premium"]
     },
+    stripeAccountId: {
+    type: String,
+    default: null
+},
+
 });
 
 module.exports = mongoose.model('ConsumerUser', userSchema);

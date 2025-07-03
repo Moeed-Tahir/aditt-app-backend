@@ -9,5 +9,8 @@ router.post('/subscription/createCustomerAndSetupIntent', subscriptionController
 router.post('/subscription/subscribeCustomer', subscriptionController.subscribeCustomer);
 router.post('/payouts/payout', subscriptionController.payout);
 router.post('/payouts/confirmPayout', subscriptionController.confirmPayout);
+router.post('/payouts/createConnectedAccount', subscriptionController.createConnectedAccount);
+router.post('/payouts/createAccountLink', subscriptionController.createAccountLink);
+router.post('/payouts/createPayout', subscriptionController.createPayout);
 
 module.exports = router;
