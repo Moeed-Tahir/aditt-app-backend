@@ -4,6 +4,7 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const ConsumerUser = require('../../models/ConsumerUser.model');
 const Subscription = require('../../models/Subscription.model');
 const TransactionHistory = require('../../models/TransactionHistory.model');
+const moment = require("moment");
 
 exports.createPlan = async (req, res) => {
   try {
@@ -520,3 +521,73 @@ exports.createPayout = async (req, res) => {
     });
   }
 };
+
+exports.getUserTransactionHistory = async (req, res) => {
+    const { userId, page = 1, limit = 10 } = req.body; 
+
+    if (!userId) {
+        return res.status(400).json({ error: "User ID is required" });
+    }
+
+    try {
+        const startOfPreviousMonth = moment().subtract(1, 'months').startOf('month').toDate();
+        const endOfPreviousMonth = moment().subtract(1, 'months').endOf('month').toDate();
+
+        const query = { 
+            userId,
+            createdAt: { 
+                $gte: startOfPreviousMonth,
+                $lte: endOfPreviousMonth
+            }
+        };
+
+        const pageNumber = parseInt(page);
+        const limitNumber = parseInt(limit);
+        const skip = (pageNumber - 1) * limitNumber;
+
+        const transactions = await TransactionHistory.find(query)
+            .sort({ createdAt: -1 }) 
+            .skip(skip)
+            .limit(limitNumber)
+            .lean();
+
+        const totalCount = await TransactionHistory.countDocuments(query);
+
+        await cleanupOldTransactions();
+
+        res.status(200).json({
+            success: true,
+            data: transactions,
+            pagination: {
+                totalRecords: totalCount,
+                currentPage: pageNumber,
+                totalPages: Math.ceil(totalCount / limitNumber),
+                recordsPerPage: limitNumber
+            },
+            month: moment(startOfPreviousMonth).format('MMMM YYYY')
+        });
+
+    } catch (error) {
+        console.error("Error fetching transaction history:", error);
+        res.status(500).json({ 
+            success: false,
+            error: "Internal server error" 
+        });
+    }
+};
+
+async function cleanupOldTransactions() {
+    try {
+        const cutoffDate = moment().subtract(2, 'months').startOf('month').toDate();
+        
+        const result = await TransactionHistory.deleteMany({
+            createdAt: { $lt: cutoffDate }
+        });
+
+        console.log(`Cleaned up ${result.deletedCount} old transactions`);
+        return result;
+    } catch (error) {
+        console.error("Error cleaning up old transactions:", error);
+        throw error;
+    }
+}
