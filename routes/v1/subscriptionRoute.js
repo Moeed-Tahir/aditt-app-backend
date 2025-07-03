@@ -12,5 +12,7 @@ router.post('/payouts/confirmPayout', subscriptionController.confirmPayout);
 router.post('/payouts/createConnectedAccount', subscriptionController.createConnectedAccount);
 router.post('/payouts/createAccountLink', subscriptionController.createAccountLink);
 router.post('/payouts/createPayout', subscriptionController.createPayout);
+router.post('/payouts/createPayout', subscriptionController.createPayout);
+router.post('/payouts/getUserTransactionHistory', subscriptionController.getUserTransactionHistory);
 
 module.exports = router;
