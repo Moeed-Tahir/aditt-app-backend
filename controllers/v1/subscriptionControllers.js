@@ -124,6 +124,58 @@ exports.createCustomerAndSetupIntent = async (req, res) => {
   }
 };
 
+// exports.subscribeCustomer = async (req, res) => {
+//   try {
+//     const { priceId, setupIntentId, userId } = req.body;
+
+//     if (!priceId || !setupIntentId || !userId) {
+//       return res.status(400).json({
+//         status: "failed",
+//         message: "Missing required fields.",
+//       });
+//     }
+
+//     const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+
+//     const paymentMethodId = setupIntent.payment_method;
+//     const customerId = setupIntent.customer;
+
+//     const subscription = await stripe.subscriptions.create({
+//       customer: customerId,
+//       default_payment_method: paymentMethodId,
+//       items: [{ price: priceId }],
+//       expand: ['latest_invoice.payment_intent'],
+//     });
+
+//     const startDate = new Date(subscription.current_period_start * 1000);
+//     const endDate = new Date(subscription.current_period_end * 1000);
+
+//     const newSubscription = await Subscription.create({
+//       stripeSubscriptionId: subscription.id,
+//       status: subscription.status,
+//       planId: priceId,
+//       priceId: priceId,
+//       startDate,
+//       endDate,
+//       userId,
+//     });
+
+//     await ConsumerUser.findByIdAndUpdate(userId, {
+//       subscriptionPlan: 'Premium',
+//     });
+
+//     res.status(200).json({
+//       status: "success",
+//       subscriptionId: subscription.id,
+//       clientSecret: subscription.latest_invoice.payment_intent.client_secret,
+//     });
+//   } catch (error) {
+//     res.status(500).json({
+//       status: "failed",
+//       message: error.message,
+//     });
+//   }
+// };
 exports.subscribeCustomer = async (req, res) => {
   try {
     const { priceId, setupIntentId, userId } = req.body;
@@ -136,7 +188,6 @@ exports.subscribeCustomer = async (req, res) => {
     }
 
     const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
-
     const paymentMethodId = setupIntent.payment_method;
     const customerId = setupIntent.customer;
 
@@ -147,8 +198,10 @@ exports.subscribeCustomer = async (req, res) => {
       expand: ['latest_invoice.payment_intent'],
     });
 
-    const startDate = new Date(subscription.current_period_start * 1000);
-    const endDate = new Date(subscription.current_period_end * 1000);
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(startDate.getDate() + 30);
+
 
     const newSubscription = await Subscription.create({
       stripeSubscriptionId: subscription.id,
@@ -164,10 +217,22 @@ exports.subscribeCustomer = async (req, res) => {
       subscriptionPlan: 'Premium',
     });
 
+    let clientSecret = null;
+    if (
+      subscription.latest_invoice &&
+      subscription.latest_invoice.payment_intent &&
+      subscription.latest_invoice.payment_intent.client_secret
+    ) {
+      clientSecret = subscription.latest_invoice.payment_intent.client_secret;
+    }
+
+    const updatedUser = await ConsumerUser.findById(userId);
+
     res.status(200).json({
       status: "success",
       subscriptionId: subscription.id,
-      clientSecret: subscription.latest_invoice.payment_intent.client_secret,
+      clientSecret,
+      user: updatedUser,
     });
   } catch (error) {
     res.status(500).json({
@@ -176,6 +241,7 @@ exports.subscribeCustomer = async (req, res) => {
     });
   }
 };
+
 
 exports.checkAndCancelExpiredSubscriptions = async () => {
   try {
@@ -345,72 +411,112 @@ exports.confirmPayout = async (req, res) => {
   }
 };
 
-exports.getUserTransactionHistory = async (req, res) => {
-  const { userId, page = 1, limit = 10 } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ error: "User ID is required" });
-  }
-
+exports.createConnectedAccount = async (req, res) => {
   try {
-    const startOfPreviousMonth = moment().subtract(1, 'months').startOf('month').toDate();
-    const endOfPreviousMonth = moment().subtract(1, 'months').endOf('month').toDate();
+    const { userId, email } = req.body;
 
-    const query = {
-      userId,
-      createdAt: {
-        $gte: startOfPreviousMonth,
-        $lte: endOfPreviousMonth
-      }
-    };
+    const user = await ConsumerUser.findById(userId);
+    if (!user) return res.status(404).json({ status: "failed", message: "User not found" });
 
-    const pageNumber = parseInt(page);
-    const limitNumber = parseInt(limit);
-    const skip = (pageNumber - 1) * limitNumber;
+    if (user.stripeAccountId) {
+      return res.status(200).json({
+        status: "success",
+        stripeAccountId: user.stripeAccountId,
+      });
+    }
 
-    const transactions = await TransactionHistory.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNumber)
-      .lean();
-
-    const totalCount = await TransactionHistory.countDocuments(query);
-
-    await cleanupOldTransactions();
-
-    res.status(200).json({
-      success: true,
-      data: transactions,
-      pagination: {
-        totalRecords: totalCount,
-        currentPage: pageNumber,
-        totalPages: Math.ceil(totalCount / limitNumber),
-        recordsPerPage: limitNumber
+    const account = await stripe.accounts.create({
+      type: "express",
+      country: "US",
+      email: email,
+      capabilities: {
+        transfers: { requested: true },
       },
-      month: moment(startOfPreviousMonth).format('MMMM YYYY')
     });
 
+    user.stripeAccountId = account.id;
+    await user.save();
+
+    res.status(200).json({
+      status: "success",
+      stripeAccountId: account.id,
+    });
   } catch (error) {
-    console.error("Error fetching transaction history:", error);
     res.status(500).json({
-      success: false,
-      error: "Internal server error"
+      status: "failed",
+      message: error.message,
     });
   }
 };
 
-async function cleanupOldTransactions() {
+exports.createAccountLink = async (req, res) => {
   try {
-    const cutoffDate = moment().subtract(2, 'months').startOf('month').toDate();
+    const { userId } = req.body;
 
-    const result = await TransactionHistory.deleteMany({
-      createdAt: { $lt: cutoffDate }
+    const user = await ConsumerUser.findById(userId);
+    if (!user || !user.stripeAccountId) {
+      return res.status(400).json({ status: "failed", message: "Stripe connected account not found." });
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+      account: user.stripeAccountId,
+      refresh_url: "https://yourapp.com/stripe/onboarding/refresh",
+      return_url: "https://yourapp.com/stripe/onboarding/complete",
+      type: "account_onboarding",
     });
 
-    console.log(`Cleaned up ${result.deletedCount} old transactions`);
-    return result;
+    res.status(200).json({
+      status: "success",
+      url: accountLink.url,
+    });
   } catch (error) {
-    console.error("Error cleaning up old transactions:", error);
-    throw error;
+    res.status(500).json({
+      status: "failed",
+      message: error.message,
+    });
   }
-}
+};
+
+exports.createPayout = async (req, res) => {
+  try {
+    const { userId, amount } = req.body;
+
+    const user = await ConsumerUser.findById(userId);
+    if (!user || !user.stripeAccountId) {
+      return res.status(400).json({ status: "failed", message: "User or Stripe account not found." });
+    }
+
+    const transfer = await stripe.transfers.create({
+      amount: Math.floor(amount * 100),
+      currency: "usd",
+      destination: user.stripeAccountId,
+
+    });
+
+    const payout = await stripe.payouts.create({
+      amount: Math.floor(amount * 100),
+      currency: "usd",
+    }, {
+      stripeAccount: user.stripeAccountId,
+    });
+
+    const transaction = new TransactionHistory({
+      userId: userId,
+      amount: amount,
+      type: 'withdraw'
+    });
+
+    await transaction.save();
+
+    res.status(200).json({
+      status: "success",
+      payoutId: payout.id,
+      transferId: transfer.id,
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "failed",
+      message: error.message,
+    });
+  }
+};
