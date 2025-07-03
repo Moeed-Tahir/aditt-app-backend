@@ -3,6 +3,7 @@ dotenv.config();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const ConsumerUser = require('../../models/ConsumerUser.model');
 const Subscription = require('../../models/Subscription.model');
+const TransactionHistory = require('../../models/TransactionHistory.model');
 
 exports.createPlan = async (req, res) => {
   try {
@@ -201,7 +202,7 @@ exports.subscribeCustomer = async (req, res) => {
     const endDate = new Date();
     endDate.setDate(startDate.getDate() + 30);
 
-    
+
     const newSubscription = await Subscription.create({
       stripeSubscriptionId: subscription.id,
       status: subscription.status,
@@ -230,8 +231,8 @@ exports.subscribeCustomer = async (req, res) => {
     res.status(200).json({
       status: "success",
       subscriptionId: subscription.id,
-      clientSecret, 
-      user: updatedUser, 
+      clientSecret,
+      user: updatedUser,
     });
   } catch (error) {
     res.status(500).json({
@@ -382,6 +383,14 @@ exports.confirmPayout = async (req, res) => {
       description: description || `Payout to ${user.name}`,
     });
 
+    const transaction = new TransactionHistory({
+      userId: userId,
+      type: 'payout',
+      amount: payout.amount / 100,
+    });
+
+    await transaction.save();
+
     res.status(200).json({
       status: "success",
       payoutId: payout.id,
@@ -389,6 +398,7 @@ exports.confirmPayout = async (req, res) => {
       currency: payout.currency,
       arrivalDate: payout.arrival_date,
       status: payout.status,
+      transactionId: transaction._id,
       message: "Payout initiated successfully"
     });
 
@@ -401,7 +411,6 @@ exports.confirmPayout = async (req, res) => {
   }
 };
 
-// Create Connected accounts
 exports.createConnectedAccount = async (req, res) => {
   try {
     const { userId, email } = req.body;
@@ -417,7 +426,7 @@ exports.createConnectedAccount = async (req, res) => {
     }
 
     const account = await stripe.accounts.create({
-      type: "express", 
+      type: "express",
       country: "US",
       email: email,
       capabilities: {
@@ -440,7 +449,6 @@ exports.createConnectedAccount = async (req, res) => {
   }
 };
 
-// Create account links
 exports.createAccountLink = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -452,8 +460,8 @@ exports.createAccountLink = async (req, res) => {
 
     const accountLink = await stripe.accountLinks.create({
       account: user.stripeAccountId,
-      refresh_url: "https://yourapp.com/stripe/onboarding/refresh", 
-      return_url: "https://yourapp.com/stripe/onboarding/complete", 
+      refresh_url: "https://yourapp.com/stripe/onboarding/refresh",
+      return_url: "https://yourapp.com/stripe/onboarding/complete",
       type: "account_onboarding",
     });
 
@@ -469,8 +477,6 @@ exports.createAccountLink = async (req, res) => {
   }
 };
 
-
-// Create Payouts
 exports.createPayout = async (req, res) => {
   try {
     const { userId, amount } = req.body;
@@ -484,15 +490,23 @@ exports.createPayout = async (req, res) => {
       amount: Math.floor(amount * 100),
       currency: "usd",
       destination: user.stripeAccountId,
-  
+
     });
 
     const payout = await stripe.payouts.create({
-      amount: Math.floor(amount * 100), // in cents
+      amount: Math.floor(amount * 100),
       currency: "usd",
     }, {
       stripeAccount: user.stripeAccountId,
     });
+
+    const transaction = new TransactionHistory({
+      userId: userId,
+      amount: amount,
+      type: 'withdraw'
+    });
+
+    await transaction.save();
 
     res.status(200).json({
       status: "success",
