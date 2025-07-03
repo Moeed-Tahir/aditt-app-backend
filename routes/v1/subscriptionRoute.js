@@ -9,5 +9,6 @@ router.post('/subscription/createCustomerAndSetupIntent', subscriptionController
 router.post('/subscription/subscribeCustomer', subscriptionController.subscribeCustomer);
 router.post('/payouts/payout', subscriptionController.payout);
 router.post('/payouts/confirmPayout', subscriptionController.confirmPayout);
+router.post('/payouts/getUserTransactionHistory', subscriptionController.getUserTransactionHistory);
 
 module.exports = router;
