@@ -471,170 +471,164 @@ exports.recordCampaignClick = async (req, res) => {
             return res.status(400).json({ error: 'userId and campaignId are required' });
         }
 
-        client = await MongoClient.connect(process.env.MONGO_URI);
-        const db = client.db();
-
         if (!ObjectId.isValid(userId)) {
             return res.status(400).json({ error: 'Invalid user ID format' });
-        }
-
-        const user = await db.collection('consumerusers').findOne({ _id: new ObjectId(userId) });
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
         }
 
         if (!ObjectId.isValid(campaignId)) {
             return res.status(400).json({ error: 'Invalid campaign ID format' });
         }
 
+        client = await MongoClient.connect(process.env.MONGO_URI);
+        const db = client.db();
+
+        const user = await db.collection('consumerusers').findOne({ _id: new ObjectId(userId) });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const campaign = await db.collection('campaigns').findOne({ _id: new ObjectId(campaignId) });
+        if (!campaign) {
+            return res.status(404).json({ error: 'Campaign not found' });
+        }
+
+        if (campaign.status === 'Completed') {
+            return res.status(200).json({
+                message: 'Campaign already completed',
+                data: campaign
+            });
+        }
+
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        const updateResult = await db.collection('campaigns').findOneAndUpdate(
-            { _id: new ObjectId(campaignId) },
-            [
-                {
-                    $set: {
-                        'engagements.totalCount': { $add: ['$engagements.totalCount', 1] },
-                        'clickCount.totalCount': { $add: ['$clickCount.totalCount', 1] },
-                        'engagements.dailyCounts': {
-                            $cond: [
-                                {
-                                    $gt: [
-                                        {
-                                            $size: {
-                                                $filter: {
-                                                    input: '$engagements.dailyCounts',
-                                                    as: 'daily',
-                                                    cond: { $eq: ['$$daily.date', today] }
-                                                }
-                                            }
-                                        },
-                                        0
-                                    ]
-                                },
-                                {
-                                    $map: {
-                                        input: '$engagements.dailyCounts',
-                                        as: 'daily',
-                                        in: {
-                                            $cond: [
-                                                { $eq: ['$$daily.date', today] },
-                                                {
-                                                    date: '$$daily.date',
-                                                    count: { $add: ['$$daily.count', 1] }
-                                                },
-                                                '$$daily'
-                                            ]
-                                        }
-                                    }
-                                },
-                                {
-                                    $concatArrays: [
-                                        '$engagements.dailyCounts',
-                                        [{ date: today, count: 1 }]
-                                    ]
-                                }
-                            ]
-                        },
-                        'clickCount.dailyCounts': {
-                            $cond: [
-                                {
-                                    $gt: [
-                                        {
-                                            $size: {
-                                                $filter: {
-                                                    input: '$clickCount.dailyCounts',
-                                                    as: 'daily',
-                                                    cond: { $eq: ['$$daily.date', today] }
-                                                }
-                                            }
-                                        },
-                                        0
-                                    ]
-                                },
-                                {
-                                    $map: {
-                                        input: '$clickCount.dailyCounts',
-                                        as: 'daily',
-                                        in: {
-                                            $cond: [
-                                                { $eq: ['$$daily.date', today] },
-                                                {
-                                                    date: '$$daily.date',
-                                                    count: { $add: ['$$daily.count', 1] }
-                                                },
-                                                '$$daily'
-                                            ]
-                                        }
-                                    }
-                                },
-                                {
-                                    $concatArrays: [
-                                        '$clickCount.dailyCounts',
-                                        [{ date: today, count: 1 }]
-                                    ]
-                                }
-                            ]
-                        },
-                        status: {
-                            $cond: [
-                                {
-                                    $and: [
-                                        { $gte: ['$engagements.totalCount', '$engagements.totalEngagementValue'] },
-                                        { $ne: ['$status', 'Completed'] }
-                                    ]
-                                },
-                                'Completed',
-                                '$status'
-                            ]
-                        }
-                    }
-                }
-            ],
-            { returnDocument: 'after' }
+        const currentEngagement = campaign.engagements?.totalCount || 0;
+        const engagementGoal = campaign.engagements?.totalEngagementValue || 0;
+
+        if (currentEngagement >= engagementGoal) {
+            return res.status(200).json({
+                message: 'Campaign engagement limit reached',
+                data: campaign
+            });
+        }
+
+        const newEngagementCount = currentEngagement + 1;
+        const willComplete = newEngagementCount >= engagementGoal;
+
+        const updateOperations = {
+            $inc: {
+                'engagements.totalCount': 1,
+                'clickCount.totalCount': 1
+            },
+            $set: {
+                updatedAt: new Date()
+            }
+        };
+
+        const engagementDailyIndex = campaign.engagements.dailyCounts?.findIndex(d =>
+            d.date.toISOString() === today.toISOString()
         );
 
-        if (updateResult.value && updateResult.value.status === 'Completed') {
-            const businessUser = await db.collection('users').findOne({ userId: updateResult.value.userId });
+        if (engagementDailyIndex >= 0) {
+            updateOperations.$inc[`engagements.dailyCounts.${engagementDailyIndex}.count`] = 1;
+        } else {
+            updateOperations.$push = {
+                'engagements.dailyCounts': { date: today, count: 1 }
+            };
+        }
 
-            if (businessUser && businessUser.businessEmail) {
+        const clickDailyIndex = campaign.clickCount.dailyCounts?.findIndex(d =>
+            d.date.toISOString() === today.toISOString()
+        );
 
-                const transporter = nodemailer.createTransport({
-                    service: 'gmail',
-                    auth: {
-                        user: process.env.EMAIL_USER,
-                        pass: process.env.EMAIL_PASSWORD
-                    }
+        if (clickDailyIndex >= 0) {
+            updateOperations.$inc[`clickCount.dailyCounts.${clickDailyIndex}.count`] = 1;
+        } else if (!updateOperations.$push) {
+            updateOperations.$push = {
+                'clickCount.dailyCounts': { date: today, count: 1 }
+            };
+        } else {
+            updateOperations.$push['clickCount.dailyCounts'] = { date: today, count: 1 };
+        }
+
+        if (willComplete) {
+            updateOperations.$set.status = 'Completed';
+        }
+
+        const updateResult = await db.collection('campaigns').findOneAndUpdate(
+            {
+                _id: new ObjectId(campaignId),
+                'engagements.totalCount': { $lt: engagementGoal }
+            },
+            updateOperations,
+            { returnDocument: 'after', returnOriginal: false }
+        );
+
+        if (!updateResult) {
+            const currentCampaign = await db.collection('campaigns').findOne({ _id: new ObjectId(campaignId) });
+            return res.status(200).json({
+                message: 'Campaign engagement limit reached',
+                data: currentCampaign
+            });
+        }
+
+        if (willComplete && updateResult.status === 'Completed') {
+            try {
+                const businessUser = await db.collection('users').findOne({
+                    userId: campaign.userId
                 });
 
-                const mailOptions = {
-                    from: process.env.EMAIL_USER,
-                    to: businessUser.businessEmail,
-                    subject: 'Campaign Completed',
-                    html: `
-                        <p>Hello ${businessUser.name || 'Business User'},</p>
-                        <p>Your campaign "${updateResult.value.campaignTitle}" has been shown to all the targeted people and has now been completed.</p>
-                        <p>Thank you for using our platform!</p>
-                        <p>Best regards,<br>Your Platform Team</p>
-                    `
-                };
+                if (businessUser?.businessEmail) {
+                    const transporter = nodemailer.createTransport({
+                        service: 'gmail',
+                        auth: {
+                            user: process.env.EMAIL_USER,
+                            pass: process.env.EMAIL_PASSWORD
+                        }
+                    });
 
-                await transporter.sendMail(mailOptions);
+                    await transporter.sendMail({
+                        from: process.env.EMAIL_USER,
+                        to: businessUser.businessEmail,
+                        subject: `Campaign Completed: ${campaign.campaignTitle}`,
+                        html: `
+                            <p>Hello ${businessUser.name || 'Business User'},</p>
+                            <p>Your campaign <strong>"${campaign.campaignTitle}"</strong> has successfully reached its engagement goal!</p>
+                            <p><strong>Engagement Details:</strong></p>
+                            <ul>
+                                <li>Target: ${engagementGoal} engagements</li>
+                                <li>Achieved: ${newEngagementCount} engagements</li>
+                                <li>Completion Date: ${new Date().toLocaleDateString()}</li>
+                            </ul>
+                            <p>Thank you for using our platform!</p>
+                            <p>Best regards,<br>Your Marketing Team</p>
+                        `
+                    });
+                    console.log('Completion email sent to:', businessUser.businessEmail);
+                }
+            } catch (emailError) {
+                console.error('Error sending completion email:', emailError);
             }
         }
 
         return res.status(200).json({
-            message: 'Campaign engagement updated successfully',
+            message: willComplete ? 'Campaign completed successfully' : 'Engagement recorded',
             data: updateResult
         });
 
     } catch (error) {
         console.error('Error in recordCampaignClick:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return res.status(500).json({
+            error: 'Internal server error',
+            details: error.message
+        });
     } finally {
         if (client) {
-            await client.close();
+            try {
+                await client.close();
+            } catch (closeError) {
+                console.error('Error closing MongoDB connection:', closeError);
+            }
         }
     }
 };
