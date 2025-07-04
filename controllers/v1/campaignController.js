@@ -5,8 +5,8 @@ const dotenv = require("dotenv");
 const UserCampaignView = require('../../models/UserCampaignView.model');
 const mongoose = require("mongoose");
 const TransactionHistory = require('../../models/TransactionHistory.model');
-const moment = require("moment");
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const nodemailer = require("nodemailer");
 
 dotenv.config();
 exports.getAllSortedCampaigns = async (req, res) => {
@@ -576,12 +576,53 @@ exports.recordCampaignClick = async (req, res) => {
                                     ]
                                 }
                             ]
+                        },
+                        status: {
+                            $cond: [
+                                {
+                                    $and: [
+                                        { $gte: ['$engagements.totalCount', '$engagements.totalEngagementValue'] },
+                                        { $ne: ['$status', 'Completed'] }
+                                    ]
+                                },
+                                'Completed',
+                                '$status'
+                            ]
                         }
                     }
                 }
             ],
             { returnDocument: 'after' }
         );
+
+        if (updateResult.value && updateResult.value.status === 'Completed') {
+            const businessUser = await db.collection('users').findOne({ userId: updateResult.value.userId });
+
+            if (businessUser && businessUser.businessEmail) {
+
+                const transporter = nodemailer.createTransport({
+                    service: 'gmail',
+                    auth: {
+                        user: process.env.EMAIL_USER,
+                        pass: process.env.EMAIL_PASSWORD
+                    }
+                });
+
+                const mailOptions = {
+                    from: process.env.EMAIL_USER,
+                    to: businessUser.businessEmail,
+                    subject: 'Campaign Completed',
+                    html: `
+                        <p>Hello ${businessUser.name || 'Business User'},</p>
+                        <p>Your campaign "${updateResult.value.campaignTitle}" has been shown to all the targeted people and has now been completed.</p>
+                        <p>Thank you for using our platform!</p>
+                        <p>Best regards,<br>Your Platform Team</p>
+                    `
+                };
+
+                await transporter.sendMail(mailOptions);
+            }
+        }
 
         return res.status(200).json({
             message: 'Campaign engagement updated successfully',
@@ -599,85 +640,84 @@ exports.recordCampaignClick = async (req, res) => {
 };
 
 
-
 exports.paymentDeduct = async (req, res) => {
-  let client;
-  try {
-    client = await MongoClient.connect(process.env.MONGO_URI);
-    const db = client.db();
+    let client;
+    try {
+        client = await MongoClient.connect(process.env.MONGO_URI);
+        const db = client.db();
 
-    const campaign = await db.collection('campaigns').findOne({
-      status: 'Active',
-    });
+        const campaign = await db.collection('campaigns').findOne({
+            status: 'Active',
+        });
 
-    if (!campaign) {
-      return res.status(404).json({ success: false, message: 'Campaign not found or not active' });
+        if (!campaign) {
+            return res.status(404).json({ success: false, message: 'Campaign not found or not active' });
+        }
+
+        const todayDate = new Date().toISOString().slice(0, 10);
+        const todayEngagement = campaign.engagements?.dailyCounts?.find(item => {
+            const itemDate = new Date(item.date).toISOString().slice(0, 10);
+            return itemDate === todayDate;
+        });
+
+        const engagementsToday = todayEngagement?.count || 0;
+
+        if (engagementsToday <= 0) {
+            return res.json({
+                success: true,
+                message: 'No engagements to charge for today',
+                campaignId: campaign._id,
+                engagementsToday: 0,
+            });
+        }
+
+        if (campaign.campaignBudget < engagementsToday) {
+            return res.status(400).json({
+                success: false,
+                message: 'Insufficient campaign budget',
+                requiredAmount: engagementsToday,
+                remainingBudget: campaign.campaignBudget,
+            });
+        }
+
+        const charge = await stripe.charges.create({
+            amount: engagementsToday * 100,
+            currency: 'usd',
+            source: 'tok_visa',
+            description: `Charge for ${engagementsToday} engagements on ${campaign.campaignTitle}`,
+            metadata: {
+                campaignId: campaign._id.toString(),
+                userId: campaign.userId,
+            },
+        });
+
+        await db.collection('campaigns').updateOne(
+            { _id: campaign._id },
+            {
+                $inc: { campaignBudget: -engagementsToday },
+                $push: {
+                    paymentHistory: {
+                        date: new Date(),
+                        amount: engagementsToday,
+                        status: 'success',
+                        stripeChargeId: charge.id,
+                    },
+                },
+            }
+        );
+
+        res.json({
+            success: true,
+            message: 'Payment processed successfully',
+            chargeId: charge.id,
+            remainingBudget: campaign.campaignBudget - engagementsToday,
+        });
+
+    } catch (error) {
+        console.error('Payment error:', error);
+        res.status(500).json({ success: false, message: 'Payment failed', error: error.message });
+    } finally {
+        if (client) client.close();
     }
-
-    const todayDate = new Date().toISOString().slice(0, 10);
-    const todayEngagement = campaign.engagements?.dailyCounts?.find(item => {
-      const itemDate = new Date(item.date).toISOString().slice(0, 10);
-      return itemDate === todayDate;
-    });
-
-    const engagementsToday = todayEngagement?.count || 0;
-
-    if (engagementsToday <= 0) {
-      return res.json({
-        success: true,
-        message: 'No engagements to charge for today',
-        campaignId: campaign._id,
-        engagementsToday: 0,
-      });
-    }
-
-    if (campaign.campaignBudget < engagementsToday) {
-      return res.status(400).json({
-        success: false,
-        message: 'Insufficient campaign budget',
-        requiredAmount: engagementsToday,
-        remainingBudget: campaign.campaignBudget,
-      });
-    }
-
-    const charge = await stripe.charges.create({
-      amount: engagementsToday * 100,
-      currency: 'usd',
-      source: 'tok_visa',
-      description: `Charge for ${engagementsToday} engagements on ${campaign.campaignTitle}`,
-      metadata: {
-        campaignId: campaign._id.toString(),
-        userId: campaign.userId,
-      },
-    });
-
-    await db.collection('campaigns').updateOne(
-      { _id: campaign._id },
-      {
-        $inc: { campaignBudget: -engagementsToday },
-        $push: {
-          paymentHistory: {
-            date: new Date(),
-            amount: engagementsToday,
-            status: 'success',
-            stripeChargeId: charge.id,
-          },
-        },
-      }
-    );
-
-    res.json({
-      success: true,
-      message: 'Payment processed successfully',
-      chargeId: charge.id,
-      remainingBudget: campaign.campaignBudget - engagementsToday,
-    });
-
-  } catch (error) {
-    console.error('Payment error:', error);
-    res.status(500).json({ success: false, message: 'Payment failed', error: error.message });
-  } finally {
-    if (client) client.close();
-  }
 };
 
