@@ -7,8 +7,13 @@ const mongoose = require("mongoose");
 const TransactionHistory = require('../../models/TransactionHistory.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const nodemailer = require("nodemailer");
-
+const { VideoIntelligenceServiceClient } = require('@google-cloud/video-intelligence');
 dotenv.config();
+
+
+const videoIntelligenceClient = new VideoIntelligenceServiceClient({
+  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+});
 exports.getAllSortedCampaigns = async (req, res) => {
     let client;
     try {
@@ -714,4 +719,65 @@ exports.paymentDeduct = async (req, res) => {
         if (client) client.close();
     }
 };
+
+exports.verifyCampaignVideos = async () => {
+  let client;
+  try {
+    client = await MongoClient.connect(process.env.MONGO_URI);
+    const db = client.db();
+
+    const unverifiedCampaigns = await db.collection('campaigns').find({ 
+      videoVerified: false,
+      status: { $ne: 'Rejected' }
+    }).toArray();
+
+    for (const campaign of unverifiedCampaigns) {
+      try {
+        const [operation] = await videoIntelligenceClient.annotateVideo({
+          inputUri: campaign.campaignVideoUrl,
+          features: ['EXPLICIT_CONTENT_DETECTION'],
+        });
+
+        const [explicitContentResult] = await operation.promise();
+        const frames = explicitContentResult.annotationResults[0]?.explicitAnnotation?.frames || [];
+
+        const hasExplicitContent = frames.some(frame => 
+          ['LIKELY', 'VERY_LIKELY'].includes(frame.pornographyLikelihood)
+        );
+
+        await db.collection('campaigns').updateOne(
+          { _id: campaign._id },
+          { 
+            $set: { 
+              videoVerified: true,
+              ...(hasExplicitContent ? { 
+                status: 'Rejected',
+                reason: 'Video contains inappropriate content' 
+              } : {})
+            }
+          }
+        );
+
+        console.log(`Processed campaign ${campaign._id}: ${hasExplicitContent ? 'Rejected' : 'Verified'}`);
+      } catch (error) {
+        console.error(`Error processing campaign ${campaign._id}:`, error);
+        await db.collection('campaigns').updateOne(
+          { _id: campaign._id },
+          { 
+            $set: { 
+              videoVerified: true,
+              status: 'Rejected',
+              reason: `Video verification failed: ${error.message.substring(0, 100)}`
+            }
+          }
+        );
+      }
+    }
+  } catch (error) {
+    console.error('Error in video verification cron job:', error);
+  } finally {
+    if (client) await client.close();
+  }
+};
+
 
