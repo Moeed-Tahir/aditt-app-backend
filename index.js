@@ -9,6 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const subscriptionController = require('./controllers/v1/subscriptionControllers');
+const campaignController = require('./controllers/v1/campaignController');
 
 (async () => {
     try {
@@ -45,6 +46,22 @@ const subscriptionController = require('./controllers/v1/subscriptionControllers
         cron.schedule('0 0 * * *', async () => {
             console.log('Running subscription expiry check...');
             await subscriptionController.checkAndCancelExpiredSubscriptions();
+        }, {
+            scheduled: true,
+            timezone: 'UTC'
+        });
+
+        cron.schedule('0 0 * * *', async () => {
+            console.log('💳 Running daily payment deduction...');
+            await campaignController.paymentDeduct();
+        }, {
+            scheduled: true,
+            timezone: 'UTC'
+        });
+
+        cron.schedule('0 0 * * *', async () => {
+            console.log('Check Campaign Video Verification');
+            await campaignController.verifyCampaignVideos();
         }, {
             scheduled: true,
             timezone: 'UTC'

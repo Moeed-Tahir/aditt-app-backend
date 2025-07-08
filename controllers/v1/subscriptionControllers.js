@@ -125,58 +125,6 @@ exports.createCustomerAndSetupIntent = async (req, res) => {
   }
 };
 
-// exports.subscribeCustomer = async (req, res) => {
-//   try {
-//     const { priceId, setupIntentId, userId } = req.body;
-
-//     if (!priceId || !setupIntentId || !userId) {
-//       return res.status(400).json({
-//         status: "failed",
-//         message: "Missing required fields.",
-//       });
-//     }
-
-//     const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
-
-//     const paymentMethodId = setupIntent.payment_method;
-//     const customerId = setupIntent.customer;
-
-//     const subscription = await stripe.subscriptions.create({
-//       customer: customerId,
-//       default_payment_method: paymentMethodId,
-//       items: [{ price: priceId }],
-//       expand: ['latest_invoice.payment_intent'],
-//     });
-
-//     const startDate = new Date(subscription.current_period_start * 1000);
-//     const endDate = new Date(subscription.current_period_end * 1000);
-
-//     const newSubscription = await Subscription.create({
-//       stripeSubscriptionId: subscription.id,
-//       status: subscription.status,
-//       planId: priceId,
-//       priceId: priceId,
-//       startDate,
-//       endDate,
-//       userId,
-//     });
-
-//     await ConsumerUser.findByIdAndUpdate(userId, {
-//       subscriptionPlan: 'Premium',
-//     });
-
-//     res.status(200).json({
-//       status: "success",
-//       subscriptionId: subscription.id,
-//       clientSecret: subscription.latest_invoice.payment_intent.client_secret,
-//     });
-//   } catch (error) {
-//     res.status(500).json({
-//       status: "failed",
-//       message: error.message,
-//     });
-//   }
-// };
 exports.subscribeCustomer = async (req, res) => {
   try {
     const { priceId, setupIntentId, userId } = req.body;
@@ -242,7 +190,6 @@ exports.subscribeCustomer = async (req, res) => {
     });
   }
 };
-
 
 exports.checkAndCancelExpiredSubscriptions = async () => {
   try {

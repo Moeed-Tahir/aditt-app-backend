@@ -5,8 +5,15 @@ const dotenv = require("dotenv");
 const UserCampaignView = require('../../models/UserCampaignView.model');
 const mongoose = require("mongoose");
 const TransactionHistory = require('../../models/TransactionHistory.model');
-
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const nodemailer = require("nodemailer");
+const { VideoIntelligenceServiceClient } = require('@google-cloud/video-intelligence');
 dotenv.config();
+
+
+const videoIntelligenceClient = new VideoIntelligenceServiceClient({
+  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+});
 exports.getAllSortedCampaigns = async (req, res) => {
     let client;
     try {
@@ -460,7 +467,6 @@ exports.submitSurveyResponses = async (req, res) => {
     }
 };
 
-
 exports.recordCampaignClick = async (req, res) => {
     let client;
     try {
@@ -470,100 +476,308 @@ exports.recordCampaignClick = async (req, res) => {
             return res.status(400).json({ error: 'userId and campaignId are required' });
         }
 
-        client = await MongoClient.connect(process.env.MONGO_URI);
-        const db = client.db();
-
         if (!ObjectId.isValid(userId)) {
             return res.status(400).json({ error: 'Invalid user ID format' });
-        }
-
-        const user = await db.collection('consumerusers').findOne(
-            { _id: new ObjectId(userId) }
-        );
-
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
         }
 
         if (!ObjectId.isValid(campaignId)) {
             return res.status(400).json({ error: 'Invalid campaign ID format' });
         }
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        client = await MongoClient.connect(process.env.MONGO_URI);
+        const db = client.db();
 
-        const updateResult = await db.collection('campaigns').findOneAndUpdate(
-            { _id: new ObjectId(campaignId) },
-            [
-                {
-                    $set: {
-                        'engagements.totalCount': { $add: ['$engagements.totalCount', 1] },
-                        'clickCount.totalCount': { $add: ['$clickCount.totalCount', 1] },
-                        'clickCount.dailyCounts': {
-                            $cond: [
-                                {
-                                    $gt: [
-                                        {
-                                            $size: {
-                                                $filter: {
-                                                    input: '$clickCount.dailyCounts',
-                                                    as: 'daily',
-                                                    cond: { $eq: ['$$daily.date', today] }
-                                                }
-                                            }
-                                        },
-                                        0
-                                    ]
-                                },
-                                {
-                                    $map: {
-                                        input: '$clickCount.dailyCounts',
-                                        as: 'daily',
-                                        in: {
-                                            $cond: [
-                                                { $eq: ['$$daily.date', today] },
-                                                {
-                                                    date: '$$daily.date',
-                                                    count: { $add: ['$$daily.count', 1] }
-                                                },
-                                                '$$daily'
-                                            ]
-                                        }
-                                    }
-                                },
-                                {
-                                    $concatArrays: [
-                                        '$clickCount.dailyCounts',
-                                        [{ date: today, count: 1 }]
-                                    ]
-                                }
-                            ]
-                        }
-                    }
-                }
-            ],
-            {
-                returnDocument: 'after'
-            }
-        );
+        const user = await db.collection('consumerusers').findOne({ _id: new ObjectId(userId) });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
 
-        console.log("updateResult", updateResult);
-
-        if (!updateResult) {
+        const campaign = await db.collection('campaigns').findOne({ _id: new ObjectId(campaignId) });
+        if (!campaign) {
             return res.status(404).json({ error: 'Campaign not found' });
         }
 
+        if (campaign.status === 'Completed') {
+            return res.status(200).json({
+                message: 'Campaign already completed',
+                data: campaign
+            });
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const currentEngagement = campaign.engagements?.totalCount || 0;
+        const engagementGoal = campaign.engagements?.totalEngagementValue || 0;
+
+        if (currentEngagement >= engagementGoal) {
+            return res.status(200).json({
+                message: 'Campaign engagement limit reached',
+                data: campaign
+            });
+        }
+
+        const newEngagementCount = currentEngagement + 1;
+        const willComplete = newEngagementCount >= engagementGoal;
+
+        const updateOperations = {
+            $inc: {
+                'engagements.totalCount': 1,
+                'clickCount.totalCount': 1
+            },
+            $set: {
+                updatedAt: new Date()
+            }
+        };
+
+        const engagementDailyIndex = campaign.engagements.dailyCounts?.findIndex(d =>
+            d.date.toISOString() === today.toISOString()
+        );
+
+        if (engagementDailyIndex >= 0) {
+            updateOperations.$inc[`engagements.dailyCounts.${engagementDailyIndex}.count`] = 1;
+        } else {
+            updateOperations.$push = {
+                'engagements.dailyCounts': { date: today, count: 1 }
+            };
+        }
+
+        const clickDailyIndex = campaign.clickCount.dailyCounts?.findIndex(d =>
+            d.date.toISOString() === today.toISOString()
+        );
+
+        if (clickDailyIndex >= 0) {
+            updateOperations.$inc[`clickCount.dailyCounts.${clickDailyIndex}.count`] = 1;
+        } else if (!updateOperations.$push) {
+            updateOperations.$push = {
+                'clickCount.dailyCounts': { date: today, count: 1 }
+            };
+        } else {
+            updateOperations.$push['clickCount.dailyCounts'] = { date: today, count: 1 };
+        }
+
+        if (willComplete) {
+            updateOperations.$set.status = 'Completed';
+        }
+
+        const updateResult = await db.collection('campaigns').findOneAndUpdate(
+            {
+                _id: new ObjectId(campaignId),
+                'engagements.totalCount': { $lt: engagementGoal }
+            },
+            updateOperations,
+            { returnDocument: 'after', returnOriginal: false }
+        );
+
+        if (!updateResult) {
+            const currentCampaign = await db.collection('campaigns').findOne({ _id: new ObjectId(campaignId) });
+            return res.status(200).json({
+                message: 'Campaign engagement limit reached',
+                data: currentCampaign
+            });
+        }
+
+        if (willComplete && updateResult.status === 'Completed') {
+            try {
+                const businessUser = await db.collection('users').findOne({
+                    userId: campaign.userId
+                });
+
+                if (businessUser?.businessEmail) {
+                    const transporter = nodemailer.createTransport({
+                        service: 'gmail',
+                        auth: {
+                            user: process.env.EMAIL_USER,
+                            pass: process.env.EMAIL_PASSWORD
+                        }
+                    });
+
+                    await transporter.sendMail({
+                        from: process.env.EMAIL_USER,
+                        to: businessUser.businessEmail,
+                        subject: `Campaign Completed: ${campaign.campaignTitle}`,
+                        html: `
+                            <p>Hello ${businessUser.name || 'Business User'},</p>
+                            <p>Your campaign <strong>"${campaign.campaignTitle}"</strong> has successfully reached its engagement goal!</p>
+                            <p><strong>Engagement Details:</strong></p>
+                            <ul>
+                                <li>Target: ${engagementGoal} engagements</li>
+                                <li>Achieved: ${newEngagementCount} engagements</li>
+                                <li>Completion Date: ${new Date().toLocaleDateString()}</li>
+                            </ul>
+                            <p>Thank you for using our platform!</p>
+                            <p>Best regards,<br>Your Marketing Team</p>
+                        `
+                    });
+                    console.log('Completion email sent to:', businessUser.businessEmail);
+                }
+            } catch (emailError) {
+                console.error('Error sending completion email:', emailError);
+            }
+        }
+
         return res.status(200).json({
-            message: 'Campaign engagement updated successfully',
+            message: willComplete ? 'Campaign completed successfully' : 'Engagement recorded',
             data: updateResult
         });
 
     } catch (error) {
         console.error('Error in recordCampaignClick:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return res.status(500).json({
+            error: 'Internal server error',
+            details: error.message
+        });
     } finally {
         if (client) {
-            await client.close();
+            try {
+                await client.close();
+            } catch (closeError) {
+                console.error('Error closing MongoDB connection:', closeError);
+            }
         }
     }
 };
+
+
+exports.paymentDeduct = async (req, res) => {
+    let client;
+    try {
+        client = await MongoClient.connect(process.env.MONGO_URI);
+        const db = client.db();
+
+        const campaign = await db.collection('campaigns').findOne({
+            status: 'Active',
+        });
+
+        if (!campaign) {
+            return res.status(404).json({ success: false, message: 'Campaign not found or not active' });
+        }
+
+        const todayDate = new Date().toISOString().slice(0, 10);
+        const todayEngagement = campaign.engagements?.dailyCounts?.find(item => {
+            const itemDate = new Date(item.date).toISOString().slice(0, 10);
+            return itemDate === todayDate;
+        });
+
+        const engagementsToday = todayEngagement?.count || 0;
+
+        if (engagementsToday <= 0) {
+            return res.json({
+                success: true,
+                message: 'No engagements to charge for today',
+                campaignId: campaign._id,
+                engagementsToday: 0,
+            });
+        }
+
+        if (campaign.campaignBudget < engagementsToday) {
+            return res.status(400).json({
+                success: false,
+                message: 'Insufficient campaign budget',
+                requiredAmount: engagementsToday,
+                remainingBudget: campaign.campaignBudget,
+            });
+        }
+
+        const charge = await stripe.charges.create({
+            amount: engagementsToday * 100,
+            currency: 'usd',
+            source: 'tok_visa',
+            description: `Charge for ${engagementsToday} engagements on ${campaign.campaignTitle}`,
+            metadata: {
+                campaignId: campaign._id.toString(),
+                userId: campaign.userId,
+            },
+        });
+
+        await db.collection('campaigns').updateOne(
+            { _id: campaign._id },
+            {
+                $inc: { campaignBudget: -engagementsToday },
+                $push: {
+                    paymentHistory: {
+                        date: new Date(),
+                        amount: engagementsToday,
+                        status: 'success',
+                        stripeChargeId: charge.id,
+                    },
+                },
+            }
+        );
+
+        res.json({
+            success: true,
+            message: 'Payment processed successfully',
+            chargeId: charge.id,
+            remainingBudget: campaign.campaignBudget - engagementsToday,
+        });
+
+    } catch (error) {
+        console.error('Payment error:', error);
+        res.status(500).json({ success: false, message: 'Payment failed', error: error.message });
+    } finally {
+        if (client) client.close();
+    }
+};
+
+exports.verifyCampaignVideos = async () => {
+  let client;
+  try {
+    client = await MongoClient.connect(process.env.MONGO_URI);
+    const db = client.db();
+
+    const unverifiedCampaigns = await db.collection('campaigns').find({ 
+      videoVerified: false,
+      status: { $ne: 'Rejected' }
+    }).toArray();
+
+    for (const campaign of unverifiedCampaigns) {
+      try {
+        const [operation] = await videoIntelligenceClient.annotateVideo({
+          inputUri: campaign.campaignVideoUrl,
+          features: ['EXPLICIT_CONTENT_DETECTION'],
+        });
+
+        const [explicitContentResult] = await operation.promise();
+        const frames = explicitContentResult.annotationResults[0]?.explicitAnnotation?.frames || [];
+
+        const hasExplicitContent = frames.some(frame => 
+          ['LIKELY', 'VERY_LIKELY'].includes(frame.pornographyLikelihood)
+        );
+
+        await db.collection('campaigns').updateOne(
+          { _id: campaign._id },
+          { 
+            $set: { 
+              videoVerified: true,
+              ...(hasExplicitContent ? { 
+                status: 'Rejected',
+                reason: 'Video contains inappropriate content' 
+              } : {})
+            }
+          }
+        );
+
+        console.log(`Processed campaign ${campaign._id}: ${hasExplicitContent ? 'Rejected' : 'Verified'}`);
+      } catch (error) {
+        console.error(`Error processing campaign ${campaign._id}:`, error);
+        await db.collection('campaigns').updateOne(
+          { _id: campaign._id },
+          { 
+            $set: { 
+              videoVerified: true,
+              status: 'Rejected',
+              reason: `Video verification failed: ${error.message.substring(0, 100)}`
+            }
+          }
+        );
+      }
+    }
+  } catch (error) {
+    console.error('Error in video verification cron job:', error);
+  } finally {
+    if (client) await client.close();
+  }
+};
+
+

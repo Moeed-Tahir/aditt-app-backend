@@ -7,6 +7,7 @@ router.post('/campaign/getAllSortedCampaigns', campaignController.getAllSortedCa
 router.post('/campaign/submitQuizQuestionResponse', campaignController.submitQuizQuestionResponse);
 router.post('/campaign/submitSurveyResponses', campaignController.submitSurveyResponses);
 router.post('/campaign/recordCampaignClick', campaignController.recordCampaignClick );
+router.post('/campaign/paymentDeduct', campaignController.paymentDeduct );
 
 
 module.exports = router;
