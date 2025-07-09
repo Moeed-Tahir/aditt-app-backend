@@ -10,7 +10,6 @@ const nodemailer = require("nodemailer");
 const { VideoIntelligenceServiceClient } = require('@google-cloud/video-intelligence');
 dotenv.config();
 
-
 const videoIntelligenceClient = new VideoIntelligenceServiceClient({
   keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
 });
@@ -779,5 +778,6 @@ exports.verifyCampaignVideos = async () => {
     if (client) await client.close();
   }
 };
+
 
 
