@@ -480,13 +480,13 @@ exports.getUserTransactionHistory = async (req, res) => {
   }
 
   try {
-    const thirtyDaysAgo = moment().subtract(30, 'days').toDate();
+    const sevenDaysAgo = moment().subtract(7, 'days').toDate();
     const now = moment().toDate();
 
     const query = {
       userId,
       createdAt: {
-        $gte: thirtyDaysAgo,
+        $gte: sevenDaysAgo,
         $lte: now
       }
     };
@@ -502,6 +502,8 @@ exports.getUserTransactionHistory = async (req, res) => {
       .lean();
 
     const totalCount = await TransactionHistory.countDocuments(query);
+
+    // Delete transactions older than 7 days
     await cleanupOldTransactions();
 
     res.status(200).json({
@@ -526,13 +528,13 @@ exports.getUserTransactionHistory = async (req, res) => {
 
 async function cleanupOldTransactions() {
   try {
-    const cutoffDate = moment().subtract(30, 'days').toDate();
+    const cutoffDate = moment().subtract(7, 'days').toDate();
 
     const result = await TransactionHistory.deleteMany({
       createdAt: { $lt: cutoffDate }
     });
 
-    console.log(`Cleaned up ${result.deletedCount} transactions older than 30 days`);
+    console.log(`🧹 Cleaned up ${result.deletedCount} transactions older than 7 days`);
     return result;
   } catch (error) {
     console.error("Error cleaning up old transactions:", error);
