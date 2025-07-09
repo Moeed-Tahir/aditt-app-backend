@@ -11,7 +11,7 @@ const { VideoIntelligenceServiceClient } = require('@google-cloud/video-intellig
 dotenv.config();
 
 const videoIntelligenceClient = new VideoIntelligenceServiceClient({
-  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+    keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
 });
 exports.getAllSortedCampaigns = async (req, res) => {
     let client;
@@ -25,21 +25,28 @@ exports.getAllSortedCampaigns = async (req, res) => {
         const pageNum = Math.max(1, parseInt(page));
 
         if (!gender || !['Male', 'Female'].includes(gender)) {
-            return res.status(400).json({ error: "Please provide a valid gender (male or female)" });
+            return res.status(400).json({ error: "Please provide a valid gender (Male or Female)" });
         }
 
         const otherGender = gender === 'Male' ? 'Female' : 'Male';
 
+        const viewedCampaigns = await db.collection('usercampaignviews')
+            .find({ userId: new ObjectId(userId) })
+            .project({ campaignId: 1, _id: 0 })
+            .toArray();
+
+        const viewedCampaignIds = viewedCampaigns.map(c => c.campaignId.toString());
+
         const watchedCampaignsLookup = {
             $lookup: {
-                from: 'videowatchusers',
+                from: 'usercampaignviews',
                 let: { campaignId: { $toString: "$_id" } },
                 pipeline: [
                     {
                         $match: {
                             $expr: {
                                 $and: [
-                                    { $eq: ["$userId", userId] },
+                                    { $eq: ["$userId", new ObjectId(userId)] },
                                     { $eq: ["$campaignId", "$$campaignId"] }
                                 ]
                             }
@@ -50,8 +57,15 @@ exports.getAllSortedCampaigns = async (req, res) => {
             }
         };
 
+        const baseMatch = {
+            $and: [
+                { genderType: gender },
+                { status: "Active" }
+            ]
+        };
+
         const mainPipeline = [
-            { $match: { genderType: gender } },
+            { $match: baseMatch },
             watchedCampaignsLookup,
             { $sort: { createdAt: -1 } },
             { $skip: (pageNum - 1) * itemsPerPage },
@@ -64,7 +78,13 @@ exports.getAllSortedCampaigns = async (req, res) => {
                     campaignVideo: '$campaignVideoUrl',
                     brandLogo: '$companyLogo',
                     gender: '$genderType',
-                    status: { $gt: [{ $size: "$watchedStatus" }, 0] },
+                    status: {
+                        $cond: {
+                            if: { $in: ["$_id", viewedCampaignIds.map(id => new ObjectId(id))] },
+                            then: true,
+                            else: false
+                        }
+                    },
                     questions: {
                         quizQuestion: {
                             $mergeObjects: [
@@ -99,44 +119,33 @@ exports.getAllSortedCampaigns = async (req, res) => {
             }
         ];
 
-        const countPipeline = [
-            { $match: { genderType: gender } },
-            watchedCampaignsLookup,
-            { $count: "total" }
-        ];
-
-        const [campaigns, countResult] = await Promise.all([
+        const [campaigns, totalCount] = await Promise.all([
             db.collection('campaigns').aggregate(mainPipeline).toArray(),
-            db.collection('campaigns').aggregate(countPipeline).next()
+            db.collection('campaigns').countDocuments(baseMatch)
         ]);
 
-        const totalCount = countResult?.total || 0;
         const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage));
 
         if (campaigns.length < itemsPerPage && totalPages <= pageNum) {
             const remainingItems = itemsPerPage - campaigns.length;
 
-            const secondaryPipeline = [
-                { $match: { genderType: otherGender } },
-                watchedCampaignsLookup,
-                { $sort: { createdAt: -1 } },
-                { $limit: remainingItems },
-                {
-                    $project: {
-                        _id: { $toString: '$_id' },
-                        websiteLink: 1,
-                        brandName: '$campaignTitle',
-                        campaignVideo: '$campaignVideoUrl',
-                        brandLogo: '$companyLogo',
-                        gender: '$genderType',
-                        status: { $gt: [{ $size: "$watchedStatus" }, 0] },
-                        questions: mainPipeline[5].$project.questions
-                    }
-                }
-            ];
+            const secondaryMatch = {
+                $and: [
+                    { genderType: otherGender },
+                    { status: "Active" }
+                ]
+            };
 
             const secondaryResults = await db.collection('campaigns')
-                .aggregate(secondaryPipeline)
+                .aggregate([
+                    { $match: secondaryMatch },
+                    watchedCampaignsLookup,
+                    { $sort: { createdAt: -1 } },
+                    { $limit: remainingItems },
+                    {
+                        $project: mainPipeline[5].$project
+                    }
+                ])
                 .toArray();
 
             campaigns.push(...secondaryResults);
@@ -149,7 +158,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Error fetching campaigns:", error);
+        console.error("Error in getAllSortedCampaigns:", error);
         res.status(500).json({
             error: "Internal server error",
             details: error.message
@@ -182,6 +191,21 @@ exports.submitQuizQuestionResponse = async (req, res) => {
 
     let client;
     try {
+        client = await MongoClient.connect(process.env.MONGO_URI);
+        const db = client.db();
+
+        const existingView = await db.collection('usercampaignviews').findOne({
+            userId: new ObjectId(userId),
+            campaignId: new ObjectId(campaignId)
+        });
+
+        if (existingView) {
+            return res.status(400).json({
+                error: "You have already completed this campaign",
+                alreadyCompleted: true
+            });
+        }
+
         const { age, gender } = await getUserDemographics(userId);
         const ageGroup = getAgeGroup(age);
         const normalizedGender = gender.toLowerCase();
@@ -190,9 +214,6 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         if (!validGenders.includes(normalizedGender)) {
             return res.status(400).json({ error: "Invalid gender value" });
         }
-
-        client = await MongoClient.connect(process.env.MONGO_URI);
-        const db = client.db();
 
         const campaign = await db.collection('campaigns').findOne(
             { _id: new ObjectId(campaignId) },
@@ -253,9 +274,10 @@ exports.submitQuizQuestionResponse = async (req, res) => {
                 { _id: new ObjectId(campaignId) },
                 updateQuery
             ),
-            UserCampaignView.create({
-                userId: new mongoose.Types.ObjectId(userId),
-                campaignId: new mongoose.Types.ObjectId(campaignId)
+            db.collection('usercampaignviews').insertOne({
+                userId: new ObjectId(userId),
+                campaignId: new ObjectId(campaignId),
+                createdAt: new Date()
             })
         ];
 
@@ -271,33 +293,33 @@ exports.submitQuizQuestionResponse = async (req, res) => {
                 ? Math.floor(watchTimeSeconds * 3)
                 : Math.floor(watchTimeSeconds * 1);
 
-            // if (earnedCents > 0) {
-            //     const transaction = new TransactionHistory({
-            //         userId: userId,
-            //         amount: earnedCents,
-            //         type: 'earning'
-            //     });
+            if (earnedCents > 0) {
+                const transaction = new TransactionHistory({
+                    userId: userId,
+                    amount: earnedCents,
+                    type: 'earning'
+                });
 
-            //     updatePromises.push(
-            //         db.collection('consumerusers').updateOne(
-            //             { _id: new ObjectId(userId) },
-            //             {
-            //                 $inc: {
-            //                     totalBalance: earnedCents,
-            //                     remainingBalance: earnedCents
-            //                 }
-            //             }
-            //         ),
-            //         transaction.save()
-            //     );
+                updatePromises.push(
+                    db.collection('consumerusers').updateOne(
+                        { _id: new ObjectId(userId) },
+                        {
+                            $inc: {
+                                totalBalance: earnedCents,
+                                remainingBalance: earnedCents
+                            }
+                        }
+                    ),
+                    transaction.save()
+                );
 
-            //     rewardDetails = {
-            //         earnedCents,
-            //         totalBalance: user.totalBalance + earnedCents,
-            //         remainingBalance: user.remainingBalance + earnedCents,
-            //         message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
-            //     };
-            // }
+                rewardDetails = {
+                    earnedCents,
+                    totalBalance: user.totalBalance + earnedCents,
+                    remainingBalance: user.remainingBalance + earnedCents,
+                    message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
+                };
+            }
         }
 
         if (campaign.campaignVideoUrl) {
@@ -720,64 +742,61 @@ exports.paymentDeduct = async (req, res) => {
 };
 
 exports.verifyCampaignVideos = async () => {
-  let client;
-  try {
-    client = await MongoClient.connect(process.env.MONGO_URI);
-    const db = client.db();
+    let client;
+    try {
+        client = await MongoClient.connect(process.env.MONGO_URI);
+        const db = client.db();
 
-    const unverifiedCampaigns = await db.collection('campaigns').find({ 
-      videoVerified: false,
-      status: { $ne: 'Rejected' }
-    }).toArray();
+        const unverifiedCampaigns = await db.collection('campaigns').find({
+            videoVerified: false,
+            status: { $ne: 'Rejected' }
+        }).toArray();
 
-    for (const campaign of unverifiedCampaigns) {
-      try {
-        const [operation] = await videoIntelligenceClient.annotateVideo({
-          inputUri: campaign.campaignVideoUrl,
-          features: ['EXPLICIT_CONTENT_DETECTION'],
-        });
+        for (const campaign of unverifiedCampaigns) {
+            try {
+                const [operation] = await videoIntelligenceClient.annotateVideo({
+                    inputUri: campaign.campaignVideoUrl,
+                    features: ['EXPLICIT_CONTENT_DETECTION'],
+                });
 
-        const [explicitContentResult] = await operation.promise();
-        const frames = explicitContentResult.annotationResults[0]?.explicitAnnotation?.frames || [];
+                const [explicitContentResult] = await operation.promise();
+                const frames = explicitContentResult.annotationResults[0]?.explicitAnnotation?.frames || [];
 
-        const hasExplicitContent = frames.some(frame => 
-          ['LIKELY', 'VERY_LIKELY'].includes(frame.pornographyLikelihood)
-        );
+                const hasExplicitContent = frames.some(frame =>
+                    ['LIKELY', 'VERY_LIKELY'].includes(frame.pornographyLikelihood)
+                );
 
-        await db.collection('campaigns').updateOne(
-          { _id: campaign._id },
-          { 
-            $set: { 
-              videoVerified: true,
-              ...(hasExplicitContent ? { 
-                status: 'Rejected',
-                reason: 'Video contains inappropriate content' 
-              } : {})
+                await db.collection('campaigns').updateOne(
+                    { _id: campaign._id },
+                    {
+                        $set: {
+                            videoVerified: true,
+                            ...(hasExplicitContent ? {
+                                status: 'Rejected',
+                                reason: 'Video contains inappropriate content'
+                            } : {})
+                        }
+                    }
+                );
+
+                console.log(`Processed campaign ${campaign._id}: ${hasExplicitContent ? 'Rejected' : 'Verified'}`);
+            } catch (error) {
+                console.error(`Error processing campaign ${campaign._id}:`, error);
+                await db.collection('campaigns').updateOne(
+                    { _id: campaign._id },
+                    {
+                        $set: {
+                            videoVerified: true,
+                            status: 'Rejected',
+                            reason: `Video verification failed: ${error.message.substring(0, 100)}`
+                        }
+                    }
+                );
             }
-          }
-        );
-
-        console.log(`Processed campaign ${campaign._id}: ${hasExplicitContent ? 'Rejected' : 'Verified'}`);
-      } catch (error) {
-        console.error(`Error processing campaign ${campaign._id}:`, error);
-        await db.collection('campaigns').updateOne(
-          { _id: campaign._id },
-          { 
-            $set: { 
-              videoVerified: true,
-              status: 'Rejected',
-              reason: `Video verification failed: ${error.message.substring(0, 100)}`
-            }
-          }
-        );
-      }
+        }
+    } catch (error) {
+        console.error('Error in video verification cron job:', error);
+    } finally {
+        if (client) await client.close();
     }
-  } catch (error) {
-    console.error('Error in video verification cron job:', error);
-  } finally {
-    if (client) await client.close();
-  }
 };
-
-
-

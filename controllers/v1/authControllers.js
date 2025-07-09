@@ -149,7 +149,6 @@ const savePersonalInfo = async (req, res) => {
 
 const handleVerificationSuccess = async (req, res) => {
    try {
-      console.log("Call")
       const { userId } = req.query;
 
       if (!userId) {
@@ -160,7 +159,6 @@ const handleVerificationSuccess = async (req, res) => {
       }
 
       const user = await User.findOne({ _id: userId });
-      console.log("user", user);
 
       if (!user) {
          return res.status(404).json({
@@ -304,8 +302,6 @@ const stripeWebhookHandler = async (req, res) => {
       return res.status(400).send(`Webhook Error: ${err.message}`);
    }
 
-   console.log(`Event type: ${event.type}`);
-
    if (event.type.startsWith('identity.verification_session.')) {
       const session = event.data.object;
       const userId = session.metadata?.userId;
@@ -333,15 +329,8 @@ const stripeWebhookHandler = async (req, res) => {
          updateData.isVerified = true;
       }
 
-      console.log('Updating user verification status:', {
-         userId,
-         status,
-         verificationSessionId: session.id
-      });
-
       try {
          await User.findByIdAndUpdate(userId, updateData);
-         console.log(`Successfully updated user ${userId} to status: ${status}`);
       } catch (err) {
          console.error(`Error updating user ${userId}:`, err);
          return res.status(500).send('Error updating user');

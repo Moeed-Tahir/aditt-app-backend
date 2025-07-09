@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const videoWatchUserSchema = new mongoose.Schema({
+const userCampaignViewSchema = new mongoose.Schema({
     userId: {
         type: String,
         required: true
@@ -11,4 +11,4 @@ const videoWatchUserSchema = new mongoose.Schema({
     },
 });
 
-module.exports = mongoose.model('VideoWatchUser', videoWatchUserSchema);
+module.exports = mongoose.model('UserCampaignView', userCampaignViewSchema);

@@ -10,7 +10,6 @@ exports.sendOTPViaMessage = async (phone, otp) => {
     const formattedPhone = phone.startsWith('+') ? phone : `+${phone}`;
 
     try {
-        console.log("Call sendOtp")
         const message = await client.messages.create({
             body: `Your verification code is: ${otp}`,
             from: process.env.TWILIO_PHONE_NUMBER,
