@@ -242,7 +242,7 @@ const initiateIdentityVerification = async (req, res) => {
                userId: user._id.toString()
             }
          });
-         
+
          user.stripeCustomerId = stripeCustomer.id;
          await user.save();
       }
@@ -252,9 +252,10 @@ const initiateIdentityVerification = async (req, res) => {
          metadata: {
             userId: user._id.toString()
          },
-         return_url: `https://aditt.app/`,
+         return_url: `https://aditt-app-backend.vercel.app/api/auth/verification-success?userId=${user._id}`,
          options: {
             document: {
+               require_id_number: false,
                allowed_types: ['driving_license', 'passport', 'id_card'],
                require_id_number: true,
                require_live_capture: true,
@@ -524,23 +525,16 @@ const updateProfile = async (req, res) => {
 
 const deleteUserProfile = async (req, res) => {
    try {
-      const { userId } = req.body;
+      const { userId, phone } = req.body;
 
-      if (!userId) {
+      if (!userId && !phone) {
          return res.status(400).json({
             success: false,
-            message: 'User ID is required'
+            message: 'Either User ID or phone number is required.'
          });
       }
 
-      if (!mongoose.Types.ObjectId.isValid(userId)) {
-         return res.status(400).json({
-            success: false,
-            message: 'Invalid User ID format'
-         });
-      }
-
-      const deletedUser = await User.findByIdAndDelete(userId);
+      const deletedUser = await User.findOneAndDelete({ _id: userId, phone });
 
       if (!deletedUser) {
          return res.status(404).json({
@@ -696,4 +690,4 @@ const resendOTP = async (req, res) => {
 };
 
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP,deleteUserProfile };
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP, deleteUserProfile };

@@ -12,7 +12,7 @@ router.post('/signup/personal-info', jwtMiddleware, authController.savePersonalI
 router.post('/signup/verify-identity', jwtMiddleware, authController.initiateIdentityVerification);
 router.post('/user/updateProfile', jwtMiddleware, authController.updateProfile);
 router.get('/verification-success', authController.handleVerificationSuccess);
-router.post('/deleteUserProfile', authController.deleteUserProfile);
+router.post('/deleteUserProfile', jwtMiddleware, authController.deleteUserProfile);
 router.post("/verify-email", jwtMiddleware, authController.verifyEmail);
 router.post("/verify-otp", jwtMiddleware, authController.verifyOTP);
 router.post("/resend-otp", jwtMiddleware, authController.resendOTP);

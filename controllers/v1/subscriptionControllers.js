@@ -430,8 +430,12 @@ exports.createPayout = async (req, res) => {
     const { userId, amount } = req.body;
 
     const user = await ConsumerUser.findById(userId);
-    if (!user || !user.stripeAccountId) {
-      return res.status(400).json({ status: "failed", message: "User or Stripe account not found." });
+    if (!user) {
+      return res.status(400).json({ status: "failed", message: "User not found." });
+    }
+
+    if (!user.stripeAccountId) {
+      return res.status(400).json({ status: "failed", message: "User doesn't have a Stripe connected account." });
     }
 
     const transfer = await stripe.transfers.create({

@@ -271,33 +271,33 @@ exports.submitQuizQuestionResponse = async (req, res) => {
                 ? Math.floor(watchTimeSeconds * 3)
                 : Math.floor(watchTimeSeconds * 1);
 
-            if (earnedCents > 0) {
-                const transaction = new TransactionHistory({
-                    userId: userId,
-                    amount: earnedCents,
-                    type: 'earning'
-                });
+            // if (earnedCents > 0) {
+            //     const transaction = new TransactionHistory({
+            //         userId: userId,
+            //         amount: earnedCents,
+            //         type: 'earning'
+            //     });
 
-                updatePromises.push(
-                    db.collection('consumerusers').updateOne(
-                        { _id: new ObjectId(userId) },
-                        {
-                            $inc: {
-                                totalBalance: earnedCents,
-                                remainingBalance: earnedCents
-                            }
-                        }
-                    ),
-                    transaction.save()
-                );
+            //     updatePromises.push(
+            //         db.collection('consumerusers').updateOne(
+            //             { _id: new ObjectId(userId) },
+            //             {
+            //                 $inc: {
+            //                     totalBalance: earnedCents,
+            //                     remainingBalance: earnedCents
+            //                 }
+            //             }
+            //         ),
+            //         transaction.save()
+            //     );
 
-                rewardDetails = {
-                    earnedCents,
-                    totalBalance: user.totalBalance + earnedCents,
-                    remainingBalance: user.remainingBalance + earnedCents,
-                    message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
-                };
-            }
+            //     rewardDetails = {
+            //         earnedCents,
+            //         totalBalance: user.totalBalance + earnedCents,
+            //         remainingBalance: user.remainingBalance + earnedCents,
+            //         message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
+            //     };
+            // }
         }
 
         if (campaign.campaignVideoUrl) {
