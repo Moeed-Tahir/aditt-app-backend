@@ -10,10 +10,10 @@ const userSchema = new mongoose.Schema({
         required: true,
         unique: true
     },
-    email: { 
+    email: {
         type: String,
         unique: true,
-        sparse: true 
+        sparse: true
     },
     otp: {
         type: String,
@@ -31,9 +31,9 @@ const userSchema = new mongoose.Schema({
     zipCode: {
         type: String,
     },
-    location: {  
+    location: {
         type: String,
-        required:false
+        required: false
     },
     isOtpVerified: {
         type: Boolean,
@@ -62,12 +62,16 @@ const userSchema = new mongoose.Schema({
     subscriptionPlan: {
         type: String,
         default: "Free",
-        enum:["Free","Premium"]
+        enum: ["Free", "Premium"]
+    },
+    stripeVerificationSessionId: {
+        type: String,
+        require: true
     },
     stripeAccountId: {
-    type: String,
-    default: null
-},
+        type: String,
+        default: null
+    },
 
 });
 

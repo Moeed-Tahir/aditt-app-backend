@@ -252,10 +252,9 @@ const initiateIdentityVerification = async (req, res) => {
          metadata: {
             userId: user._id.toString()
          },
-         return_url: `https://aditt-app-backend.vercel.app/api/auth/verification-success?userId=${user._id}`,
+         return_url: `https://aditt.app/`,
          options: {
             document: {
-               require_id_number: false,
                allowed_types: ['driving_license', 'passport', 'id_card'],
                require_id_number: true,
                require_live_capture: true,
