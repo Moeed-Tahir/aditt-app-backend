@@ -18,5 +18,6 @@ router.post("/verify-otp", jwtMiddleware, authController.verifyOTP);
 router.post("/resend-otp", jwtMiddleware, authController.resendOTP);
 router.post('/create-pin', jwtMiddleware, authController.createPin);
 router.post('/verify-pin', jwtMiddleware, authController.verifyPin);
+router.post('/userFaceIdEnabled', authController.userFaceIdEnabled);
 
 module.exports = router;

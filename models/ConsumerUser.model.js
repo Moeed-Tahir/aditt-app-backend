@@ -76,7 +76,10 @@ const userSchema = new mongoose.Schema({
         type: String,
         default: null
     },
-
+    faceIdEnabled:{
+        type: Boolean,
+        default:false
+    }
 });
 
 module.exports = mongoose.model('ConsumerUser', userSchema);

@@ -552,7 +552,6 @@ const verifyEmail = async (req, res) => {
    try {
       const { userId, email } = req.body;
 
-      // Check if the user already exists in the DummyUser collection
       const existingUser = await User.findOne({ _id: userId, email });
 
       if (existingUser) {
@@ -758,5 +757,55 @@ const verifyPin = async (req, res) => {
    }
 }
 
+const userFaceIdEnabled = async (req, res) => {
+   try {
+      const { userId, isFaceIdEnabled } = req.body;
+      
+      if (!userId || typeof isFaceIdEnabled !== 'boolean') {
+         return res.status(400).json({
+            success: false,
+            message: 'Please provide valid userId and isFaceIdEnabled (boolean)'
+         });
+      }
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP, deleteUserProfile, createPin, verifyPin };
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+         return res.status(400).json({
+            success: false,
+            message: 'Invalid user ID format'
+         });
+      }
+
+      const updatedUser = await User.findByIdAndUpdate(
+         userId,
+         { $set: { faceIdEnabled: isFaceIdEnabled } },
+         { new: true }
+      );
+
+
+      if (!updatedUser) {
+         return res.status(404).json({
+            success: false,
+            message: 'User not found'
+         });
+      }
+
+      res.status(200).json({
+         success: true,
+         message: 'Face ID status updated successfully',
+         data: {
+            faceIdEnabled: updatedUser.faceIdEnabled
+         }
+      });
+
+   } catch (error) {
+      console.error("Error in userFaceIdEnabled:", error);
+      res.status(500).json({
+         success: false,
+         message: 'Internal server error',
+         error: error.message
+      });
+   }
+};
+
+
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP, deleteUserProfile, createPin, verifyPin, userFaceIdEnabled };
