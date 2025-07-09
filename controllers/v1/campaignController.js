@@ -11,7 +11,7 @@ const { VideoIntelligenceServiceClient } = require('@google-cloud/video-intellig
 dotenv.config();
 
 const videoIntelligenceClient = new VideoIntelligenceServiceClient({
-  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+    keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
 });
 exports.getAllSortedCampaigns = async (req, res) => {
     let client;
@@ -271,33 +271,33 @@ exports.submitQuizQuestionResponse = async (req, res) => {
                 ? Math.floor(watchTimeSeconds * 3)
                 : Math.floor(watchTimeSeconds * 1);
 
-            // if (earnedCents > 0) {
-            //     const transaction = new TransactionHistory({
-            //         userId: userId,
-            //         amount: earnedCents,
-            //         type: 'earning'
-            //     });
+            if (earnedCents > 0) {
+                const transaction = new TransactionHistory({
+                    userId: userId,
+                    amount: earnedCents,
+                    type: 'earning'
+                });
 
-            //     updatePromises.push(
-            //         db.collection('consumerusers').updateOne(
-            //             { _id: new ObjectId(userId) },
-            //             {
-            //                 $inc: {
-            //                     totalBalance: earnedCents,
-            //                     remainingBalance: earnedCents
-            //                 }
-            //             }
-            //         ),
-            //         transaction.save()
-            //     );
+                updatePromises.push(
+                    db.collection('consumerusers').updateOne(
+                        { _id: new ObjectId(userId) },
+                        {
+                            $inc: {
+                                totalBalance: earnedCents,
+                                remainingBalance: earnedCents
+                            }
+                        }
+                    ),
+                    transaction.save()
+                );
 
-            //     rewardDetails = {
-            //         earnedCents,
-            //         totalBalance: user.totalBalance + earnedCents,
-            //         remainingBalance: user.remainingBalance + earnedCents,
-            //         message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
-            //     };
-            // }
+                rewardDetails = {
+                    earnedCents,
+                    totalBalance: user.totalBalance + earnedCents,
+                    remainingBalance: user.remainingBalance + earnedCents,
+                    message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
+                };
+            }
         }
 
         if (campaign.campaignVideoUrl) {
@@ -345,6 +345,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         }
     }
 };
+
 
 exports.submitSurveyResponses = async (req, res) => {
     const { userId, campaignId, surveyResponse1, surveyResponse2 } = req.body;
@@ -720,63 +721,63 @@ exports.paymentDeduct = async (req, res) => {
 };
 
 exports.verifyCampaignVideos = async () => {
-  let client;
-  try {
-    client = await MongoClient.connect(process.env.MONGO_URI);
-    const db = client.db();
+    let client;
+    try {
+        client = await MongoClient.connect(process.env.MONGO_URI);
+        const db = client.db();
 
-    const unverifiedCampaigns = await db.collection('campaigns').find({ 
-      videoVerified: false,
-      status: { $ne: 'Rejected' }
-    }).toArray();
+        const unverifiedCampaigns = await db.collection('campaigns').find({
+            videoVerified: false,
+            status: { $ne: 'Rejected' }
+        }).toArray();
 
-    for (const campaign of unverifiedCampaigns) {
-      try {
-        const [operation] = await videoIntelligenceClient.annotateVideo({
-          inputUri: campaign.campaignVideoUrl,
-          features: ['EXPLICIT_CONTENT_DETECTION'],
-        });
+        for (const campaign of unverifiedCampaigns) {
+            try {
+                const [operation] = await videoIntelligenceClient.annotateVideo({
+                    inputUri: campaign.campaignVideoUrl,
+                    features: ['EXPLICIT_CONTENT_DETECTION'],
+                });
 
-        const [explicitContentResult] = await operation.promise();
-        const frames = explicitContentResult.annotationResults[0]?.explicitAnnotation?.frames || [];
+                const [explicitContentResult] = await operation.promise();
+                const frames = explicitContentResult.annotationResults[0]?.explicitAnnotation?.frames || [];
 
-        const hasExplicitContent = frames.some(frame => 
-          ['LIKELY', 'VERY_LIKELY'].includes(frame.pornographyLikelihood)
-        );
+                const hasExplicitContent = frames.some(frame =>
+                    ['LIKELY', 'VERY_LIKELY'].includes(frame.pornographyLikelihood)
+                );
 
-        await db.collection('campaigns').updateOne(
-          { _id: campaign._id },
-          { 
-            $set: { 
-              videoVerified: true,
-              ...(hasExplicitContent ? { 
-                status: 'Rejected',
-                reason: 'Video contains inappropriate content' 
-              } : {})
+                await db.collection('campaigns').updateOne(
+                    { _id: campaign._id },
+                    {
+                        $set: {
+                            videoVerified: true,
+                            ...(hasExplicitContent ? {
+                                status: 'Rejected',
+                                reason: 'Video contains inappropriate content'
+                            } : {})
+                        }
+                    }
+                );
+
+                console.log(`Processed campaign ${campaign._id}: ${hasExplicitContent ? 'Rejected' : 'Verified'}`);
+            } catch (error) {
+                console.error(`Error processing campaign ${campaign._id}:`, error);
+                await db.collection('campaigns').updateOne(
+                    { _id: campaign._id },
+                    {
+                        $set: {
+                            videoVerified: true,
+                            status: 'Rejected',
+                            reason: `Video verification failed: ${error.message.substring(0, 100)}`
+                        }
+                    }
+                );
             }
-          }
-        );
-
-        console.log(`Processed campaign ${campaign._id}: ${hasExplicitContent ? 'Rejected' : 'Verified'}`);
-      } catch (error) {
-        console.error(`Error processing campaign ${campaign._id}:`, error);
-        await db.collection('campaigns').updateOne(
-          { _id: campaign._id },
-          { 
-            $set: { 
-              videoVerified: true,
-              status: 'Rejected',
-              reason: `Video verification failed: ${error.message.substring(0, 100)}`
-            }
-          }
-        );
-      }
+        }
+    } catch (error) {
+        console.error('Error in video verification cron job:', error);
+    } finally {
+        if (client) await client.close();
     }
-  } catch (error) {
-    console.error('Error in video verification cron job:', error);
-  } finally {
-    if (client) await client.close();
-  }
 };
 
 
