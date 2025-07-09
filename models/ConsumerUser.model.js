@@ -15,6 +15,10 @@ const userSchema = new mongoose.Schema({
         unique: true,
         sparse: true
     },
+    pin: {
+        type: String,
+        required: false
+    },
     otp: {
         type: String,
     },

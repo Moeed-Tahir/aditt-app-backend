@@ -689,5 +689,85 @@ const resendOTP = async (req, res) => {
    }
 };
 
+const createPin = async (req, res) => {
+   try {
+      const { userId, pin } = req.body;
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP, deleteUserProfile };
+      if (!userId || !pin) {
+         return res.status(400).json({
+            success: false,
+            message: 'User ID and pin are required'
+         });
+      }
+
+      const user = await User.findOne({ _id: userId });
+
+      if (!user) {
+         return res.status(404).json({
+            success: false,
+            message: 'User not found'
+         });
+      }
+
+      user.pin = pin;
+      await user.save();
+
+      res.status(200).json({
+         success: true,
+         message: 'Pin created successfully',
+         userId: user._id
+      });
+
+   } catch (error) {
+      res.status(500).json({
+         success: false,
+         message: 'Server error during pin creation',
+         error: error.message
+      });
+   }
+}
+
+const verifyPin = async (req, res) => {
+   try {
+      const { userId, pin } = req.body;
+
+      if (!userId || !pin) {
+         return res.status(400).json({
+            success: false,
+            message: 'User ID and pin are required'
+         });
+      }
+
+      const user = await User.findOne({ _id: userId });
+
+      if (!user) {
+         return res.status(404).json({
+            success: false,
+            message: 'User not found'
+         });
+      }
+
+      if (user.pin !== pin) {
+         return res.status(400).json({
+            success: false,
+            message: 'Invalid pin'
+         });
+      }
+
+      res.status(200).json({
+         success: true,
+         message: 'Pin verified successfully',
+         user: user
+      });
+
+   } catch (error) {
+      res.status(500).json({
+         success: false,
+         message: 'Server error during pin verification',
+         error: error.message
+      });
+   }
+}
+
+
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP, deleteUserProfile, createPin, verifyPin };

@@ -16,5 +16,7 @@ router.post('/deleteUserProfile', jwtMiddleware, authController.deleteUserProfil
 router.post("/verify-email", jwtMiddleware, authController.verifyEmail);
 router.post("/verify-otp", jwtMiddleware, authController.verifyOTP);
 router.post("/resend-otp", jwtMiddleware, authController.resendOTP);
+router.post('/create-pin', jwtMiddleware, authController.createPin);
+router.post('/verify-pin', jwtMiddleware, authController.verifyPin);
 
 module.exports = router;
