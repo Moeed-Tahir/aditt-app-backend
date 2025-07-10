@@ -3,7 +3,6 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const jwt = require("jsonwebtoken");
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
-const { sendOTPViaMessage } = require('../../services/otpService.js');
 const { generateOTP, sendOTPViaEmail } = require('../../services/otpService.js');
 
 dotenv.config();

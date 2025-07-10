@@ -30,7 +30,6 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
         const otherGender = gender === 'Male' ? 'Female' : 'Male';
 
-        // Fetch viewed campaign IDs
         const viewedCampaigns = await db.collection('usercampaignviews')
             .find({ userId: new ObjectId(userId) })
             .project({ campaignId: 1, _id: 0 })
@@ -38,83 +37,62 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
         const viewedCampaignIds = viewedCampaigns.map(c => new ObjectId(c.campaignId));
 
-        const watchedCampaignsLookup = {
-            $lookup: {
-                from: 'usercampaignviews',
-                let: { campaignId: { $toString: "$_id" } },
-                pipeline: [
-                    {
-                        $match: {
-                            $expr: {
-                                $and: [
-                                    { $eq: ["$userId", new ObjectId(userId)] },
-                                    { $eq: ["$campaignId", "$$campaignId"] }
-                                ]
-                            }
-                        }
-                    }
-                ],
-                as: "watchedStatus"
-            }
-        };
-
         const baseMatch = {
             $and: [
                 { genderType: gender },
                 { status: "Active" },
-                { _id: { $nin: viewedCampaignIds } } // ⛔ Exclude viewed campaigns
+                { _id: { $nin: viewedCampaignIds } }
             ]
+        };
+
+        const projection = {
+            _id: { $toString: '$_id' },
+            websiteLink: 1,
+            brandName: '$campaignTitle',
+            campaignVideo: '$campaignVideoUrl',
+            brandLogo: '$companyLogo',
+            gender: '$genderType',
+            status: {
+                $literal: false
+            },
+            questions: {
+                quizQuestion: {
+                    $mergeObjects: [
+                        '$quizQuestion',
+                        { _id: { $toString: '$quizQuestion._id' } }
+                    ]
+                },
+                surveyQuestion1: {
+                    $ifNull: [
+                        {
+                            $mergeObjects: [
+                                '$surveyQuestion1',
+                                { _id: { $toString: '$surveyQuestion1._id' } }
+                            ]
+                        },
+                        null
+                    ]
+                },
+                surveyQuestion2: {
+                    $ifNull: [
+                        {
+                            $mergeObjects: [
+                                '$surveyQuestion2',
+                                { _id: { $toString: '$surveyQuestion2._id' } }
+                            ]
+                        },
+                        null
+                    ]
+                }
+            }
         };
 
         const mainPipeline = [
             { $match: baseMatch },
-            watchedCampaignsLookup,
             { $sort: { createdAt: -1 } },
             { $skip: (pageNum - 1) * itemsPerPage },
             { $limit: itemsPerPage },
-            {
-                $project: {
-                    _id: { $toString: '$_id' },
-                    websiteLink: 1,
-                    brandName: '$campaignTitle',
-                    campaignVideo: '$campaignVideoUrl',
-                    brandLogo: '$companyLogo',
-                    gender: '$genderType',
-                    status: {
-                        $literal: false // ⛔ No need to check here, already filtered
-                    },
-                    questions: {
-                        quizQuestion: {
-                            $mergeObjects: [
-                                '$quizQuestion',
-                                { _id: { $toString: '$quizQuestion._id' } }
-                            ]
-                        },
-                        surveyQuestion1: {
-                            $ifNull: [
-                                {
-                                    $mergeObjects: [
-                                        '$surveyQuestion1',
-                                        { _id: { $toString: '$surveyQuestion1._id' } }
-                                    ]
-                                },
-                                null
-                            ]
-                        },
-                        surveyQuestion2: {
-                            $ifNull: [
-                                {
-                                    $mergeObjects: [
-                                        '$surveyQuestion2',
-                                        { _id: { $toString: '$surveyQuestion2._id' } }
-                                    ]
-                                },
-                                null
-                            ]
-                        }
-                    }
-                }
-            }
+            { $project: projection }
         ];
 
         const [campaigns, totalCount] = await Promise.all([
@@ -124,7 +102,6 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
         const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage));
 
-        // Secondary fallback from other gender (optional)
         if (campaigns.length < itemsPerPage && totalPages <= pageNum) {
             const remainingItems = itemsPerPage - campaigns.length;
 
@@ -132,19 +109,16 @@ exports.getAllSortedCampaigns = async (req, res) => {
                 $and: [
                     { genderType: otherGender },
                     { status: "Active" },
-                    { _id: { $nin: viewedCampaignIds } } // ⛔ Also exclude viewed from fallback
+                    { _id: { $nin: viewedCampaignIds } }
                 ]
             };
 
             const secondaryResults = await db.collection('campaigns')
                 .aggregate([
                     { $match: secondaryMatch },
-                    watchedCampaignsLookup,
                     { $sort: { createdAt: -1 } },
                     { $limit: remainingItems },
-                    {
-                        $project: mainPipeline[5].$project
-                    }
+                    { $project: projection }
                 ])
                 .toArray();
 
