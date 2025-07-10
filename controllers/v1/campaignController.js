@@ -30,12 +30,13 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
         const otherGender = gender === 'Male' ? 'Female' : 'Male';
 
+        // Fetch viewed campaign IDs
         const viewedCampaigns = await db.collection('usercampaignviews')
             .find({ userId: new ObjectId(userId) })
             .project({ campaignId: 1, _id: 0 })
             .toArray();
 
-        const viewedCampaignIds = viewedCampaigns.map(c => c.campaignId.toString());
+        const viewedCampaignIds = viewedCampaigns.map(c => new ObjectId(c.campaignId));
 
         const watchedCampaignsLookup = {
             $lookup: {
@@ -60,7 +61,8 @@ exports.getAllSortedCampaigns = async (req, res) => {
         const baseMatch = {
             $and: [
                 { genderType: gender },
-                { status: "Active" }
+                { status: "Active" },
+                { _id: { $nin: viewedCampaignIds } } // ⛔ Exclude viewed campaigns
             ]
         };
 
@@ -79,11 +81,7 @@ exports.getAllSortedCampaigns = async (req, res) => {
                     brandLogo: '$companyLogo',
                     gender: '$genderType',
                     status: {
-                        $cond: {
-                            if: { $in: ["$_id", viewedCampaignIds.map(id => new ObjectId(id))] },
-                            then: true,
-                            else: false
-                        }
+                        $literal: false // ⛔ No need to check here, already filtered
                     },
                     questions: {
                         quizQuestion: {
@@ -126,13 +124,15 @@ exports.getAllSortedCampaigns = async (req, res) => {
 
         const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage));
 
+        // Secondary fallback from other gender (optional)
         if (campaigns.length < itemsPerPage && totalPages <= pageNum) {
             const remainingItems = itemsPerPage - campaigns.length;
 
             const secondaryMatch = {
                 $and: [
                     { genderType: otherGender },
-                    { status: "Active" }
+                    { status: "Active" },
+                    { _id: { $nin: viewedCampaignIds } } // ⛔ Also exclude viewed from fallback
                 ]
             };
 
