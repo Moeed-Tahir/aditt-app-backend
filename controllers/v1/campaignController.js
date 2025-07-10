@@ -221,7 +221,8 @@ exports.submitQuizQuestionResponse = async (req, res) => {
                 projection: {
                     "quizQuestion": 1,
                     "campaignVideoUrl": 1,
-                    "engagements": 1
+                    "engagements": 1,
+                    "videoWatchTime": 1
                 }
             }
         );
@@ -284,14 +285,39 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         let rewardDetails = null;
         if (watchTime && isCorrect) {
             const watchTimeSeconds = parseInt(watchTime);
-            if (isNaN(watchTimeSeconds) || watchTimeSeconds <= 0) {
+            if (isNaN(watchTimeSeconds)) {
                 return res.status(400).json({ error: "Invalid watch time value" });
+            }
+
+            // Cap watch time at 30 seconds
+            const cappedWatchTime = Math.min(watchTimeSeconds, 30);
+            if (cappedWatchTime <= 0) {
+                return res.status(400).json({ error: "Watch time must be positive" });
+            }
+
+            // Update video watch time tracking
+            const existingWatchTimeEntry = campaign.videoWatchTime?.find(entry => entry.seconds === cappedWatchTime);
+            
+            if (existingWatchTimeEntry) {
+                updatePromises.push(
+                    db.collection('campaigns').updateOne(
+                        { _id: new ObjectId(campaignId), "videoWatchTime.seconds": cappedWatchTime },
+                        { $inc: { "videoWatchTime.$.count": 1 } }
+                    )
+                );
+            } else {
+                updatePromises.push(
+                    db.collection('campaigns').updateOne(
+                        { _id: new ObjectId(campaignId) },
+                        { $push: { videoWatchTime: { seconds: cappedWatchTime, count: 1 } } }
+                    )
+                );
             }
 
             const subscriptionPlan = user.subscriptionPlan || "Free";
             let earnedCents = subscriptionPlan === "Premium"
-                ? Math.floor(watchTimeSeconds * 3)
-                : Math.floor(watchTimeSeconds * 1);
+                ? Math.floor(cappedWatchTime * 3)
+                : Math.floor(cappedWatchTime * 1);
 
             if (earnedCents > 0) {
                 const transaction = new TransactionHistory({
@@ -317,7 +343,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
                     earnedCents,
                     totalBalance: user.totalBalance + earnedCents,
                     remainingBalance: user.remainingBalance + earnedCents,
-                    message: `You earned ${earnedCents} cent(s) for watching ${watchTimeSeconds} seconds (${subscriptionPlan} plan)`
+                    message: `You earned ${earnedCents} cent(s) for watching ${cappedWatchTime} seconds (${subscriptionPlan} plan)`
                 };
             }
         }
@@ -348,6 +374,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
             percentage: `${percentage}% of people selected this option`,
             isCorrect,
             rewardDetails,
+            correctAnswerNumber
         });
 
     } catch (error) {
@@ -367,7 +394,6 @@ exports.submitQuizQuestionResponse = async (req, res) => {
         }
     }
 };
-
 
 exports.submitSurveyResponses = async (req, res) => {
     const { userId, campaignId, surveyResponse1, surveyResponse2 } = req.body;
@@ -660,7 +686,6 @@ exports.recordCampaignClick = async (req, res) => {
     }
 };
 
-
 exports.paymentDeduct = async (req, res) => {
     let client;
     try {
@@ -745,6 +770,7 @@ exports.paymentDeduct = async (req, res) => {
 exports.verifyCampaignVideos = async () => {
     let client;
     try {
+        
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
 

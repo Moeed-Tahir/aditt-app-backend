@@ -105,7 +105,7 @@ const verifySignupOtp = async (req, res) => {
 
 const savePersonalInfo = async (req, res) => {
    try {
-      const { userId, dateOfBirth, gender, zipCode, location, email } = req.body;
+      const { userId, dateOfBirth, gender, zipCode, location, email, status } = req.body;
 
       if (!userId || !dateOfBirth || !gender || !zipCode) {
          return res.status(400).json({
@@ -127,6 +127,7 @@ const savePersonalInfo = async (req, res) => {
       user.zipCode = zipCode;
       user.location = location;
       user.email = email;
+      user.status = status;
 
       await user.save();
 
@@ -760,7 +761,7 @@ const verifyPin = async (req, res) => {
 const userFaceIdEnabled = async (req, res) => {
    try {
       const { userId, isFaceIdEnabled } = req.body;
-      
+
       if (!userId || typeof isFaceIdEnabled !== 'boolean') {
          return res.status(400).json({
             success: false,
