@@ -19,6 +19,10 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: false
     },
+    status: {
+        type: String,
+        default: 'active'
+    },
     otp: {
         type: String,
     },
@@ -76,9 +80,9 @@ const userSchema = new mongoose.Schema({
         type: String,
         default: null
     },
-    faceIdEnabled:{
+    faceIdEnabled: {
         type: Boolean,
-        default:false
+        default: false
     }
 });
 

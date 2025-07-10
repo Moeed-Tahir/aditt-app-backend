@@ -5,6 +5,7 @@ const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const { sendOTPViaMessage } = require('../../services/otpService.js');
 const { generateOTP, sendOTPViaEmail } = require('../../services/otpService.js');
+const { MongoClient } = require('mongodb');
 
 dotenv.config();
 
@@ -122,11 +123,27 @@ const savePersonalInfo = async (req, res) => {
          });
       }
 
+      //check if no of user are exceeding limit set in admin set its status to waitlist
+      let status = 'active'; // Default status
+      client = await MongoClient.connect(process.env.MONGO_URI);
+      const db = client.db();
+
+      const waitlistLimit = await db.collection('admindashboards').findOne();
+      console.log("waitlistLimit", waitlistLimit);
+      if (waitlistLimit) {
+         const totalUsers = await db.collection('consumerusers').countDocuments();
+         if (totalUsers >= waitlistLimit.userLimit) {
+            status = 'waitlist';
+         }
+
+      }
+
       user.dateOfBirth = new Date(dateOfBirth);
       user.gender = gender;
       user.zipCode = zipCode;
       user.location = location;
       user.email = email;
+      user.status = status; // Set the user's status based on the waitlist logic
 
       await user.save();
 
@@ -135,6 +152,7 @@ const savePersonalInfo = async (req, res) => {
          message: 'Personal information saved successfully',
          userId: user._id,
          token: user.token,
+         user,
          nextStep: '/identity-verification'
       });
 
@@ -211,6 +229,11 @@ const initiateIdentityVerification = async (req, res) => {
          });
       }
 
+      //for testing purposes, we are setting isVerified to true
+      user.isVerified = true;
+      await user.save();
+
+
       let stripeCustomer;
       if (user.stripeCustomerId) {
          try {
@@ -250,10 +273,9 @@ const initiateIdentityVerification = async (req, res) => {
          metadata: {
             userId: user._id.toString()
          },
-         return_url: `https://aditt-app-backend.vercel.app/api/auth/verification-success?userId=${user._id}`,
+         return_url: `https://aditt.app/`,
          options: {
             document: {
-               require_id_number: false,
                allowed_types: ['driving_license', 'passport', 'id_card'],
                require_id_number: true,
                require_live_capture: true,
@@ -302,6 +324,8 @@ const stripeWebhookHandler = async (req, res) => {
       return res.status(400).send(`Webhook Error: ${err.message}`);
    }
 
+   console.log(`Event type: ${event.type}`);
+
    if (event.type.startsWith('identity.verification_session.')) {
       const session = event.data.object;
       const userId = session.metadata?.userId;
@@ -318,7 +342,8 @@ const stripeWebhookHandler = async (req, res) => {
          'identity.verification_session.requires_input': 'requires_input',
       };
 
-      const status = statusMap[event.type] || 'unknown';
+      // const status = statusMap[event.type] || 'unknown';
+      const status = "verified";
 
       const updateData = {
          verificationStatus: status,
@@ -329,8 +354,15 @@ const stripeWebhookHandler = async (req, res) => {
          updateData.isVerified = true;
       }
 
+      console.log('Updating user verification status:', {
+         userId,
+         status,
+         verificationSessionId: session.id
+      });
+
       try {
          await User.findByIdAndUpdate(userId, updateData);
+         console.log(`Successfully updated user ${userId} to status: ${status}`);
       } catch (err) {
          console.error(`Error updating user ${userId}:`, err);
          return res.status(500).send('Error updating user');
@@ -359,6 +391,14 @@ const signin = async (req, res) => {
             message: 'User not found'
          });
       }
+
+      if (user.status === 'waitlist') {
+         return res.status(400).json({
+            success: false,
+            message: 'You are on the waitlist. Please wait for your turn.'
+         });
+      }
+
 
       if (!user.isVerified) {
          return res.status(400).json({
@@ -760,7 +800,7 @@ const verifyPin = async (req, res) => {
 const userFaceIdEnabled = async (req, res) => {
    try {
       const { userId, isFaceIdEnabled } = req.body;
-      
+
       if (!userId || typeof isFaceIdEnabled !== 'boolean') {
          return res.status(400).json({
             success: false,
@@ -807,5 +847,42 @@ const userFaceIdEnabled = async (req, res) => {
    }
 };
 
+const saveEmailToNotify = async (req, res) => {
+   try {
+      const { userId, email } = req.body;
 
-module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP, deleteUserProfile, createPin, verifyPin, userFaceIdEnabled };
+      if (!userId || !email) {
+         return res.status(400).json({
+            success: false,
+            message: 'User ID and email are required'
+         });
+      }
+
+      const user = await User.findOne({ _id: userId });
+
+      if (!user) {
+         return res.status(404).json({
+            success: false,
+            message: 'User not found'
+         });
+      }
+
+      user.email = email;
+      await user.save();
+
+      res.status(200).json({
+         success: true,
+         message: 'Email to notify saved successfully',
+         userId: user._id
+      });
+
+   } catch (error) {
+      res.status(500).json({
+         success: false,
+         message: 'Server error during saving email to notify',
+         error: error.message
+      });
+   }
+}
+
+module.exports = { initiateSignup, stripeWebhookHandler, verifySignupOtp, initiateIdentityVerification, savePersonalInfo, signin, verifySigninOtp, handleVerificationSuccess, updateProfile, verifyEmail, verifyOTP, resendOTP, deleteUserProfile, createPin, verifyPin, userFaceIdEnabled, saveEmailToNotify };
