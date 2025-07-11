@@ -8,11 +8,9 @@ const TransactionHistory = require('../../models/TransactionHistory.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const nodemailer = require("nodemailer");
 const { VideoIntelligenceServiceClient } = require('@google-cloud/video-intelligence');
+const { Storage } = require('@google-cloud/storage');
 dotenv.config();
 
-const videoIntelligenceClient = new VideoIntelligenceServiceClient({
-    keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
-});
 exports.getAllSortedCampaigns = async (req, res) => {
     let client;
     try {
@@ -271,7 +269,7 @@ exports.submitQuizQuestionResponse = async (req, res) => {
 
             // Update video watch time tracking
             const existingWatchTimeEntry = campaign.videoWatchTime?.find(entry => entry.seconds === cappedWatchTime);
-            
+
             if (existingWatchTimeEntry) {
                 updatePromises.push(
                     db.collection('campaigns').updateOne(
@@ -741,62 +739,74 @@ exports.paymentDeduct = async (req, res) => {
     }
 };
 
-exports.verifyCampaignVideos = async () => {
+
+exports.verifyCampaignVideos = async (req,res) => {
     let client;
     try {
-        
+        const storage = new Storage({
+            projectId: 'aditt-app',
+            credentials: {
+                client_email: process.env.GOOGLE_CLIENT_EMAIL || 'aditt-video-chacker@aditt-app.iam.gserviceaccount.com',
+                private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+            }
+        });
+        const bucketName = 'aditt-video-tester';
+        const bucket = storage.bucket(bucketName);
+
         client = await MongoClient.connect(process.env.MONGO_URI);
         const db = client.db();
 
         const unverifiedCampaigns = await db.collection('campaigns').find({
-            videoVerified: false,
-            status: { $ne: 'Rejected' }
+            videoUrlIntelligenceStatus: "FAILED",
+            status: { $ne: "Rejected" }
         }).toArray();
 
         for (const campaign of unverifiedCampaigns) {
             try {
-                const [operation] = await videoIntelligenceClient.annotateVideo({
-                    inputUri: campaign.campaignVideoUrl,
-                    features: ['EXPLICIT_CONTENT_DETECTION'],
-                });
-
-                const [explicitContentResult] = await operation.promise();
-                const frames = explicitContentResult.annotationResults[0]?.explicitAnnotation?.frames || [];
-
-                const hasExplicitContent = frames.some(frame =>
-                    ['LIKELY', 'VERY_LIKELY'].includes(frame.pornographyLikelihood)
-                );
-
                 await db.collection('campaigns').updateOne(
                     { _id: campaign._id },
                     {
                         $set: {
-                            videoVerified: true,
-                            ...(hasExplicitContent ? {
-                                status: 'Rejected',
-                                reason: 'Video contains inappropriate content'
-                            } : {})
+                            status: "Rejected",
+                            reason: "Video is Rejected due to not passed by intelligence",
+                            updatedAt: new Date()
                         }
                     }
                 );
 
-                console.log(`Processed campaign ${campaign._id}: ${hasExplicitContent ? 'Rejected' : 'Verified'}`);
-            } catch (error) {
-                console.error(`Error processing campaign ${campaign._id}:`, error);
-                await db.collection('campaigns').updateOne(
-                    { _id: campaign._id },
-                    {
-                        $set: {
-                            videoVerified: true,
-                            status: 'Rejected',
-                            reason: `Video verification failed: ${error.message.substring(0, 100)}`
+                if (campaign.videoUrlId) {
+                    try {
+                        const file = bucket.file(campaign.videoUrlId);
+                        const [exists] = await file.exists();
+
+                        if (exists) {
+                            await file.delete();
+                            console.log(`Deleted video ${campaign.videoUrlId} for campaign ${campaign._id}`);
+                        } else {
+                            console.log(`Video ${campaign.videoUrlId} not found in storage for campaign ${campaign._id}`);
                         }
+                    } catch (storageError) {
+                        console.error(`Error deleting video ${campaign.videoUrlId} for campaign ${campaign._id}:`, storageError);
                     }
-                );
+                }
+
+                console.log(`Processed campaign ${campaign._id} - marked as Rejected`);
+            } catch (campaignError) {
+                console.error(`Error processing campaign ${campaign._id}:`, campaignError);
             }
         }
+        console.log(`Processed ${unverifiedCampaigns.length} campaigns with failed videos`);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Video verification process completed',
+        });
     } catch (error) {
         console.error('Error in video verification cron job:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error during video verification',
+        });
     } finally {
         if (client) await client.close();
     }

@@ -60,13 +60,13 @@ const campaignController = require('./controllers/v1/campaignController');
                 timezone: 'UTC'
             });
 
-            // cron.schedule('0 0 * * *', async () => {
-            //     console.log('Check Campaign Video Verification');
-            //     await campaignController.verifyCampaignVideos();
-            // }, {
-            //     scheduled: true,
-            //     timezone: 'UTC'
-            // });
+            cron.schedule('0 0 * * *', async () => {
+                console.log('Check Campaign Video Verification');
+                await campaignController.verifyCampaignVideos();
+            }, {
+                scheduled: true,
+                timezone: 'UTC'
+            });
 
             app.listen(PORT, () => {
                 console.log(`
