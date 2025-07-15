@@ -2,12 +2,9 @@ const { MongoClient } = require('mongodb');
 const { getUserDemographics, getAgeGroup } = require('../../utils/userUtils');
 const { ObjectId } = require('mongodb');
 const dotenv = require("dotenv");
-const UserCampaignView = require('../../models/UserCampaignView.model');
-const mongoose = require("mongoose");
 const TransactionHistory = require('../../models/TransactionHistory.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const nodemailer = require("nodemailer");
-const { VideoIntelligenceServiceClient } = require('@google-cloud/video-intelligence');
 const { Storage } = require('@google-cloud/storage');
 dotenv.config();
 
@@ -736,78 +733,5 @@ exports.paymentDeduct = async (req, res) => {
         res.status(500).json({ success: false, message: 'Payment failed', error: error.message });
     } finally {
         if (client) client.close();
-    }
-};
-
-
-exports.verifyCampaignVideos = async (req,res) => {
-    let client;
-    try {
-        const storage = new Storage({
-            projectId: 'aditt-app',
-            credentials: {
-                client_email: process.env.GOOGLE_CLIENT_EMAIL || 'aditt-video-chacker@aditt-app.iam.gserviceaccount.com',
-                private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-            }
-        });
-        const bucketName = 'aditt-video-tester';
-        const bucket = storage.bucket(bucketName);
-
-        client = await MongoClient.connect(process.env.MONGO_URI);
-        const db = client.db();
-
-        const unverifiedCampaigns = await db.collection('campaigns').find({
-            videoUrlIntelligenceStatus: "FAILED",
-            status: { $ne: "Rejected" }
-        }).toArray();
-
-        for (const campaign of unverifiedCampaigns) {
-            try {
-                await db.collection('campaigns').updateOne(
-                    { _id: campaign._id },
-                    {
-                        $set: {
-                            status: "Rejected",
-                            reason: "Video is Rejected due to not passed by intelligence",
-                            updatedAt: new Date()
-                        }
-                    }
-                );
-
-                if (campaign.videoUrlId) {
-                    try {
-                        const file = bucket.file(campaign.videoUrlId);
-                        const [exists] = await file.exists();
-
-                        if (exists) {
-                            await file.delete();
-                            console.log(`Deleted video ${campaign.videoUrlId} for campaign ${campaign._id}`);
-                        } else {
-                            console.log(`Video ${campaign.videoUrlId} not found in storage for campaign ${campaign._id}`);
-                        }
-                    } catch (storageError) {
-                        console.error(`Error deleting video ${campaign.videoUrlId} for campaign ${campaign._id}:`, storageError);
-                    }
-                }
-
-                console.log(`Processed campaign ${campaign._id} - marked as Rejected`);
-            } catch (campaignError) {
-                console.error(`Error processing campaign ${campaign._id}:`, campaignError);
-            }
-        }
-        console.log(`Processed ${unverifiedCampaigns.length} campaigns with failed videos`);
-
-        return res.status(200).json({
-            success: true,
-            message: 'Video verification process completed',
-        });
-    } catch (error) {
-        console.error('Error in video verification cron job:', error);
-        return res.status(500).json({
-            success: false,
-            message: 'Internal server error during video verification',
-        });
-    } finally {
-        if (client) await client.close();
     }
 };

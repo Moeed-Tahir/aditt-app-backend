@@ -8,6 +8,5 @@ router.post('/campaign/submitQuizQuestionResponse', campaignController.submitQui
 router.post('/campaign/submitSurveyResponses', campaignController.submitSurveyResponses);
 router.post('/campaign/recordCampaignClick', campaignController.recordCampaignClick );
 router.post('/campaign/paymentDeduct', campaignController.paymentDeduct );
-router.post('/campaign/verifyCampaignVideos', campaignController.verifyCampaignVideos );
 
 module.exports = router;
