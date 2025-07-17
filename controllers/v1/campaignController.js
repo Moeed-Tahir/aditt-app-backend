@@ -5,7 +5,6 @@ const dotenv = require("dotenv");
 const TransactionHistory = require('../../models/TransactionHistory.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const nodemailer = require("nodemailer");
-const { Storage } = require('@google-cloud/storage');
 dotenv.config();
 
 exports.getAllSortedCampaigns = async (req, res) => {
