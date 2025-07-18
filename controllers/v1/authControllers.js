@@ -10,9 +10,9 @@ dotenv.config();
 
 const initiateSignup = async (req, res) => {
    try {
-      const { name, phone } = req.body;
+      const { firstName, lastName , phone } = req.body;
 
-      if (!name || !phone) {
+      if (!firstName || !lastName || !phone) {
          return res.status(400).json({
             success: false,
             message: 'Name and phone number are required'
@@ -30,7 +30,7 @@ const initiateSignup = async (req, res) => {
       const otp = 5555;
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
-      const user = existingUser || new User({ name, phone });
+      const user = existingUser || new User({ firstName,lastName,phone });
       user.otp = otp;
       user.otpExpires = otpExpires;
       await user.save();
@@ -503,7 +503,7 @@ const verifySigninOtp = async (req, res) => {
 
 const updateProfile = async (req, res) => {
    try {
-      const { userId, name, email, dateOfBirth, gender, zipCode, location } = req.body;
+      const { userId, firstName,lastName, email, dateOfBirth, gender, zipCode, location } = req.body;
 
       if (!userId) {
          return res.status(400).json({
@@ -513,7 +513,8 @@ const updateProfile = async (req, res) => {
       }
 
       const updateData = {
-         ...(name && { name }),
+         ...(firstName && { firstName }),
+         ...(lastName && { lastName }),
          ...(email && { email }),
          ...(dateOfBirth && { dateOfBirth }),
          ...(gender && { gender }),
